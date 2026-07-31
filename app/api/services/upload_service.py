@@ -103,6 +103,46 @@ class UploadService:
     async def get_upload(self, upload_id: UUID) -> Upload:
         return await self.upload_repository.get_or_raise(upload_id)
 
+    async def update_scheduled_upload(
+        self,
+        upload_id: UUID,
+        title: str | None = None,
+        description: str | None = None,
+        tags: list[str] | None = None,
+    ) -> Upload:
+        """Edit title/description/tags on an upload that hasn't published yet.
+
+        Only allowed while status == SCHEDULED. Once the video is
+        PUBLISHED (or in any other non-scheduled state), editing metadata
+        here would be misleading — the caller must use the YouTube Studio
+        UI post-publish instead.
+        """
+        upload = await self.upload_repository.get_or_raise(upload_id)
+
+        if upload.status == UploadStatus.PUBLISHED:
+            raise UploadError(
+                f"Upload {upload_id} has already been published to YouTube "
+                "and can no longer be edited here."
+            )
+        if upload.status != UploadStatus.SCHEDULED:
+            raise UploadError(
+                f"Upload {upload_id} is not scheduled (current status: "
+                f"{upload.status.value}); only scheduled uploads can be edited."
+            )
+
+        update_fields: dict = {}
+        if title is not None:
+            update_fields["title"] = title
+        if description is not None:
+            update_fields["description"] = description
+        if tags is not None:
+            update_fields["tags"] = json.dumps(tags)
+
+        if not update_fields:
+            return upload
+
+        return await self.upload_repository.update(upload, **update_fields)
+
     async def get_by_video(self, video_id: UUID) -> Upload:
         video = await self.video_repository.get_by_id(video_id)
         if video is None:

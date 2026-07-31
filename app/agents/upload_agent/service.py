@@ -246,7 +246,34 @@ class UploadAgentService:
         except Exception as exc:
             _caught_exc = exc
             logger.error("YouTube upload failed", error=str(exc), video_id=str(video.id))
-            upload = await upload_repository.mark_failed(upload, str(exc))
+
+            # Explicit detection of YouTube Data API quota exhaustion — a 403
+            # response with reason "quotaExceeded". This is intentionally
+            # separate from the generic exception handling above: it will
+            # NOT succeed on retry today (the daily quota resets on a fixed
+            # schedule), so it stays non-retryable exactly like before, but
+            # the stored error_message is now immediately recognizable
+            # instead of a raw httpx/JSON exception dump — both on the
+            # dashboard and in the per-stage failure notifications.
+            error_text = str(exc)
+            is_quota_exceeded = (
+                "quotaExceeded" in error_text
+                or ("403" in error_text and "quota" in error_text.lower())
+            )
+            if is_quota_exceeded:
+                friendly_message = (
+                    "YouTube daily upload quota exceeded — will retry "
+                    "automatically once quota resets."
+                )
+                upload = await upload_repository.mark_failed(upload, friendly_message)
+                logger.warning(
+                    "YouTube upload quota exceeded",
+                    video_id=str(video.id),
+                    raw_error=error_text[:300],
+                )
+            else:
+                upload = await upload_repository.mark_failed(upload, str(exc))
+
             await self._log(
                 AgentLogLevel.ERROR,
                 f"YouTube upload failed: {exc}",

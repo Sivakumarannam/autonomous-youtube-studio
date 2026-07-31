@@ -11,6 +11,9 @@ You analyze trends from multiple sources and score topics based on:
 Always respond with valid JSON only. No markdown. No explanation."""
 
 
+from datetime import datetime
+
+
 def build_topic_generation_prompt(
     niche: str,
     count: int,
@@ -24,11 +27,23 @@ def build_topic_generation_prompt(
         "both": "both YouTube Shorts and long-form videos",
     }.get(content_type, "YouTube videos")
 
-    return f"""Generate {count} trending YouTube topic ideas for a channel in the niche: "{niche}".
+    # Resolve the real current date at prompt-build time rather than letting
+    # the LLM guess from training data (which produced stale years like
+    # "...in 2024" long after 2024 had passed). No year is hardcoded here —
+    # datetime.now() always reflects the server's actual current date, so
+    # this keeps working correctly in 2027, 2028, and beyond with no
+    # further changes.
+    today = datetime.now()
+    current_date_str = today.strftime("%B %d, %Y")
+    current_year = today.year
+
+    return f"""Today's date is {current_date_str}. Generate {count} trending YouTube topic ideas for a channel in the niche: "{niche}".
 
 Content format: {content_guidance}
 Language: {language}
 Sources to consider: {", ".join(sources)}
+
+IMPORTANT: Use {current_year} (the current year) in any topic title or content that references a year. Do not reference past years as if they were current or upcoming.
 
 For each topic, analyze:
 1. Current trending momentum (Google Trends, YouTube search)
@@ -46,7 +61,7 @@ Respond ONLY with a valid JSON array. Each object must have:
 Example format:
 [
   {{
-    "topic": "Docker vs Kubernetes: Which One Should You Use in 2024?",
+    "topic": "Docker vs Kubernetes: Which One Should You Use This Year?",
     "score": 95,
     "reason": "High search volume, beginner confusion drives clicks, comparison content gets 3x more views",
     "keywords": ["docker", "kubernetes", "devops", "containers", "docker tutorial"],

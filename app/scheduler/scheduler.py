@@ -235,7 +235,16 @@ class VideoPublishScheduler:
                                 from app.notifications import notify
                                 import datetime as _dt
                                 _ig_schedule = (_dt.datetime.utcnow() + _dt.timedelta(hours=24)).strftime("%Y-%m-%d %H:%M UTC")
-                                _vid_title = result.video_title or upload.title or "Untitled"
+                                # `result` here is the Upload ORM object returned by
+                                # run_upload_for_video(), which has a `title` field —
+                                # not `video_title` (that attribute only lives on
+                                # UploadAgentOutput, a different object). Using the
+                                # wrong attribute raised AttributeError every time,
+                                # which this try/except silently swallowed — the
+                                # upload succeeded, but the notification never went
+                                # out, and the logs filled with "Upload notification
+                                # failed" warnings.
+                                _vid_title = result.title or upload.title or "Untitled"
                                 await notify(
                                     title="✅ YouTube Upload Successful",
                                     body=f'"{_vid_title}" is now live on YouTube!',

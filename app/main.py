@@ -127,14 +127,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.scheduler.instagram_scheduler import get_instagram_scheduler
     ig_scheduler = get_instagram_scheduler()
 
+    # Start daily storage cleanup scheduler — removes old files from
+    # storage/videos, storage/audio, storage/cache once past retention
+    # (settings.storage_retention_days), skipping anything still in use
+    # by an in-progress or unpublished pipeline run.
+    from app.scheduler.storage_cleanup_scheduler import get_storage_cleanup_scheduler
+    storage_cleanup_scheduler = get_storage_cleanup_scheduler()
+
     if settings.run_internal_schedulers:
         scheduler.start()
         automation_scheduler.start()
         ig_scheduler.start()
+        storage_cleanup_scheduler.start()
 
     yield
 
     # Shutdown sequence
+    storage_cleanup_scheduler.shutdown()
     ig_scheduler.stop()
     automation_scheduler.shutdown()
     scheduler.shutdown()

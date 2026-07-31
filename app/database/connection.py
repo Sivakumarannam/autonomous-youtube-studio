@@ -138,10 +138,31 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with _get_session_factory()() as session:
         try:
             yield session
-            await session.commit()
         except Exception:
             await session.rollback()
             raise
+        else:
+            # The route handler completed without raising. Most routes
+            # already call session.commit() themselves, so this is a
+            # safety-net no-op in the common case. If the underlying
+            # connection was dropped in between (e.g. a Neon idle-connection
+            # drop) this commit has nothing left to persist — its failure
+            # shouldn't turn an already-successful response into a 500.
+            try:
+                await session.commit()
+            except Exception as exc:
+                from sqlalchemy.exc import DBAPIError, InterfaceError as SAInterfaceError
+
+                if isinstance(exc, (SAInterfaceError, DBAPIError)):
+                    logger.warning(
+                        "Safety-net commit failed after request completed "
+                        "(connection likely dropped) — response already "
+                        "succeeded, ignoring.",
+                        error=str(exc),
+                    )
+                else:
+                    await session.rollback()
+                    raise
         finally:
             await session.close()
 

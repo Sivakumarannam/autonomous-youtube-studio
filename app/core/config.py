@@ -243,6 +243,11 @@ class Settings(BaseSettings):
     # Storage
     storage_backend: Literal["local", "s3", "minio"] = "local"
     storage_local_path: str = "./storage"
+    # Days to keep files in storage/videos, storage/audio, and storage/cache
+    # before the daily cleanup job deletes them. Only applies to files whose
+    # corresponding Video/Upload DB record is already complete/published —
+    # see app/scheduler/storage_cleanup_scheduler.py.
+    storage_retention_days: int = 14
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_s3_bucket: str = ""

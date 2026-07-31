@@ -285,10 +285,36 @@ class PipelineAgentService:
             channel = None
             niche = "technology"
 
-        script = await self._generate_script(
-            topic=topic,
-            script_type=pipeline_run.script_type,
-            niche=niche,
+        # Captured as a plain string right away — some notifications below
+        # fire after _refresh_session() replaces self._session (following
+        # the video render), at which point `channel` is a detached ORM
+        # instance from the old session. Reading a plain string avoids any
+        # risk of touching that detached object later.
+        channel_name = channel.name if channel else "unknown"
+
+        try:
+            script = await self._generate_script(
+                topic=topic,
+                script_type=pipeline_run.script_type,
+                niche=niche,
+            )
+        except Exception as exc:
+            await self._notify_stage(
+                title="Script generation failed ❌",
+                body=f"Script generation failed for topic '{topic.title}': {str(exc)[:200]}",
+                level="error",
+                pipeline_run_id=pipeline_run.id,
+                channel_name=channel_name,
+            )
+            raise
+
+        await self._notify_stage(
+            title="Script generated ✅",
+            body=f"Script generated for topic '{topic.title}' ({script.word_count} words).",
+            level="success",
+            pipeline_run_id=pipeline_run.id,
+            channel_name=channel_name,
+            extra={"Word count": script.word_count},
         )
 
         pipeline_run = await pipeline_repo.update(
@@ -321,6 +347,17 @@ class PipelineAgentService:
                 current_stage=None,
             )
             await self._session.commit()
+            await self._notify_stage(
+                title="Quality gate failed ❌",
+                body=(
+                    f"Script for topic '{topic.title}' failed the quality "
+                    f"gate (score={script.quality_score:.1f})."
+                ),
+                level="error",
+                pipeline_run_id=pipeline_run.id,
+                channel_name=channel_name,
+                extra={"Score": round(script.quality_score, 1)},
+            )
             await self._log(
                 AgentLogLevel.WARNING,
                 "Pipeline halted: quality gate rejected the script.",
@@ -330,6 +367,18 @@ class PipelineAgentService:
             )
             await self._session.commit()
             return
+
+        await self._notify_stage(
+            title="Quality gate passed ✅",
+            body=(
+                f"Script for topic '{topic.title}' passed the quality gate "
+                f"(score={script.quality_score:.1f})."
+            ),
+            level="success",
+            pipeline_run_id=pipeline_run.id,
+            channel_name=channel_name,
+            extra={"Score": round(script.quality_score, 1)},
+        )
 
         # ---------------------------------------------------------- #
         # STAGE: SEO gate                                              #
@@ -353,6 +402,17 @@ class PipelineAgentService:
                 current_stage=None,
             )
             await self._session.commit()
+            await self._notify_stage(
+                title="SEO gate failed ❌",
+                body=(
+                    f"Script for topic '{topic.title}' failed the SEO gate "
+                    f"(score={script.seo_gate_score:.1f})."
+                ),
+                level="error",
+                pipeline_run_id=pipeline_run.id,
+                channel_name=channel_name,
+                extra={"Score": round(script.seo_gate_score, 1)},
+            )
             await self._log(
                 AgentLogLevel.WARNING,
                 "Pipeline halted: SEO gate rejected the script.",
@@ -362,6 +422,18 @@ class PipelineAgentService:
             )
             await self._session.commit()
             return
+
+        await self._notify_stage(
+            title="SEO gate passed ✅",
+            body=(
+                f"Script for topic '{topic.title}' passed the SEO gate "
+                f"(score={script.seo_gate_score:.1f})."
+            ),
+            level="success",
+            pipeline_run_id=pipeline_run.id,
+            channel_name=channel_name,
+            extra={"Score": round(script.seo_gate_score, 1)},
+        )
 
         # ---------------------------------------------------------- #
         # STAGE: voice 
@@ -386,6 +458,16 @@ class PipelineAgentService:
                 current_stage=None,
             )
             await self._session.commit()
+            await self._notify_stage(
+                title="Voice generation failed ❌",
+                body=(
+                    f"Voice generation for topic '{topic.title}' did not "
+                    "produce a complete voice track after all heal attempts."
+                ),
+                level="error",
+                pipeline_run_id=pipeline_run.id,
+                channel_name=channel_name,
+            )
             await self._log(
                 AgentLogLevel.WARNING,
                 "Pipeline halted: voice stage could not produce a COMPLETE Voice record.",
@@ -395,6 +477,21 @@ class PipelineAgentService:
             )
             await self._session.commit()
             return
+
+        from app.database.repositories.voice_repository import VoiceRepository
+        _voice_for_notify = await VoiceRepository(self._session).get_by_script_id(script.id)
+        _voice_duration = _voice_for_notify.duration if _voice_for_notify else 0.0
+        await self._notify_stage(
+            title="Voice generated ✅",
+            body=(
+                f"Voice track generated for topic '{topic.title}' "
+                f"({_voice_duration:.1f}s)."
+            ),
+            level="success",
+            pipeline_run_id=pipeline_run.id,
+            channel_name=channel_name,
+            extra={"Duration (s)": round(_voice_duration, 1)},
+        )
 
         # ---------------------------------------------------------- #
         # STAGE: video render                                          #
@@ -433,7 +530,26 @@ class PipelineAgentService:
                 current_stage=None,
             )
             await self._session.commit()
+            await self._notify_stage(
+                title="Video render failed ❌",
+                body=f"Video render failed for topic '{topic.title}': {error_msg[:200]}",
+                level="error",
+                pipeline_run_id=pipeline_run.id,
+                channel_name=channel_name,
+            )
             return
+
+        await self._notify_stage(
+            title="Video rendered ✅",
+            body=(
+                f"Video rendered for topic '{topic.title}' "
+                f"({video.file_size / (1024 * 1024):.1f} MB)."
+            ),
+            level="success",
+            pipeline_run_id=pipeline_run.id,
+            channel_name=channel_name,
+            extra={"File size (MB)": round(video.file_size / (1024 * 1024), 1)},
+        )
 
         pipeline_run = await pipeline_repo.update(
             pipeline_run,
@@ -727,6 +843,31 @@ class PipelineAgentService:
             description=script.seo_description or topic.description or "",
             script_type=pipeline_run.script_type,
         )
+
+    async def _notify_stage(
+        self,
+        title: str,
+        body: str,
+        level: str,
+        pipeline_run_id,
+        channel_name: str,
+        extra: dict | None = None,
+    ) -> None:
+        """Send a per-stage pipeline notification via the shared notify()
+        helper. Never raises — a notification failure must never break the
+        actual pipeline stage (same pattern already used at the two
+        existing call sites in run()/_execute_stages())."""
+        try:
+            from app.notifications import notify
+            merged_extra = {
+                "Pipeline ID": str(pipeline_run_id),
+                "Channel": channel_name,
+            }
+            if extra:
+                merged_extra.update(extra)
+            await notify(title=title, body=body, level=level, extra=merged_extra)
+        except Exception as exc:
+            logger.warning("Stage notification failed (non-fatal)", error=str(exc))
 
     async def _log(
         self,

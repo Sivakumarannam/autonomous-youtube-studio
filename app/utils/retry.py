@@ -79,6 +79,28 @@ def is_retryable_error(exc: BaseException) -> bool:
         if isinstance(exc, httpx.HTTPStatusError):
             return exc.response.status_code in _RETRYABLE_HTTP_STATUSES
 
+    # Dropped/closed DB connections (e.g. Neon silently closing an idle
+    # asyncpg connection during a long synchronous video render — the exact
+    # scenario _refresh_session() in PipelineAgentService exists to recover
+    # from) are transient infrastructure blips, not permanent failures.
+    # Without this, a mid-run connection drop was classified as
+    # retryable=False and killed the whole pipeline run instead of retrying.
+    try:
+        from sqlalchemy.exc import DBAPIError, DisconnectionError, InterfaceError as SAInterfaceError
+        if isinstance(exc, (DisconnectionError, SAInterfaceError)):
+            return True
+        if isinstance(exc, DBAPIError) and getattr(exc, "connection_invalidated", False):
+            return True
+    except ImportError:
+        pass
+
+    try:
+        from asyncpg.exceptions import InterfaceError as AsyncpgInterfaceError, ConnectionDoesNotExistError
+        if isinstance(exc, (AsyncpgInterfaceError, ConnectionDoesNotExistError)):
+            return True
+    except ImportError:
+        pass
+
     # Agents wrap their internal failures in AgentError (see
     # app/agents/*/agent.py), losing the original exception type unless the
     # explicit exception chain ("raise ... from e") is followed. Recurse

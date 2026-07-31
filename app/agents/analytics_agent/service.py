@@ -142,32 +142,49 @@ class AnalyticsAgentService:
         end_str = end_date.isoformat()
 
         try:
-            raw = await svc.fetch_video_analytics(
-                video_id=upload.youtube_video_id,
-                start_date=start_str,
-                end_date=end_str,
-                metrics=_EXTENDED_METRICS,
-            )
+            try:
+                raw = await svc.fetch_video_analytics(
+                    video_id=upload.youtube_video_id,
+                    start_date=start_str,
+                    end_date=end_str,
+                    metrics=_EXTENDED_METRICS,
+                )
+            except Exception as exc:
+                # impressions/CTR metrics are gated by account tier.  If the API
+                # rejects the request (4xx HTTP error), retry with primary metrics
+                # only.  Re-raise on any other unexpected failure.
+                err_str = str(exc).lower()
+                if not any(kw in err_str for kw in ("400", "403", "unsupported", "invalid")):
+                    raise
+                logger.warning(
+                    "Extended metrics unavailable; retrying with primary metrics",
+                    youtube_video_id=upload.youtube_video_id,
+                    error=str(exc),
+                )
+                raw = await svc.fetch_video_analytics(
+                    video_id=upload.youtube_video_id,
+                    start_date=start_str,
+                    end_date=end_str,
+                    metrics=_PRIMARY_METRICS,
+                )
         except Exception as exc:
-            # impressions/CTR metrics are gated by account tier.  If the API
-            # rejects the request (4xx HTTP error), retry with primary metrics
-            # only.  Re-raise on any other unexpected failure.
-            err_str = str(exc).lower()
-            if not any(kw in err_str for kw in ("400", "403", "unsupported", "invalid")):
-                await svc.close()
-                await auth.close()
-                raise
-            logger.warning(
-                "Extended metrics unavailable; retrying with primary metrics",
-                youtube_video_id=upload.youtube_video_id,
-                error=str(exc),
-            )
-            raw = await svc.fetch_video_analytics(
-                video_id=upload.youtube_video_id,
-                start_date=start_str,
-                end_date=end_str,
-                metrics=_PRIMARY_METRICS,
-            )
+            try:
+                from app.notifications import notify
+                await notify(
+                    title="Analytics collection failed ❌",
+                    body=(
+                        f"Could not fetch YouTube Analytics for "
+                        f"'{upload.title or 'Untitled'}': {str(exc)[:200]}"
+                    ),
+                    level="error",
+                    extra={
+                        "Upload ID": str(upload.id),
+                        "YouTube video ID": upload.youtube_video_id,
+                    },
+                )
+            except Exception as _notify_exc:
+                logger.warning("Notification failed (non-fatal)", error=str(_notify_exc))
+            raise
         finally:
             await svc.close()
             await auth.close()
@@ -205,6 +222,24 @@ class AnalyticsAgentService:
             entity_id=str(upload.id),
             execution_time=time.monotonic(),
         )
+
+        try:
+            from app.notifications import notify
+            await notify(
+                title="Analytics collected ✅",
+                body=(
+                    f"Analytics snapshot saved for "
+                    f"'{upload.title or 'Untitled'}' — {analytics.views} views."
+                ),
+                level="success",
+                extra={
+                    "Upload ID": str(upload.id),
+                    "YouTube video ID": upload.youtube_video_id,
+                    "Views": analytics.views,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Notification failed (non-fatal)", error=str(exc))
 
         return analytics
 

@@ -16,6 +16,16 @@ class UploadRequest(BaseModel):
     privacy_status: str = "private"
 
 
+class UploadPatchRequest(BaseModel):
+    """Partial update for a still-scheduled upload. Only these three fields
+    are editable pre-publish — everything else (privacy, schedule time,
+    YouTube identifiers) is managed by the pipeline/scheduler."""
+
+    title: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
 class UploadResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

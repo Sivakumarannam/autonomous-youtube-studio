@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas.upload import (
     UploadDeleteResponse,
     UploadListResponse,
+    UploadPatchRequest,
     UploadRequest,
     UploadResponse,
     UploadTriggerResponse,
@@ -115,6 +116,39 @@ async def list_uploads(
         total=len(uploads),
         items=[UploadResponse.model_validate(u) for u in uploads],
     )
+
+
+@router.patch(
+    "/{upload_id}",
+    response_model=UploadResponse,
+)
+async def patch_upload(
+    upload_id: UUID,
+    request: UploadPatchRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Update title, description, and/or tags on an upload that is still
+    scheduled (not yet published to YouTube).
+
+    Returns 422 if the upload has already published, or is in any state
+    other than 'scheduled'.
+    """
+    service = UploadService(session)
+    try:
+        upload = await service.update_scheduled_upload(
+            upload_id=upload_id,
+            title=request.title,
+            description=request.description,
+            tags=request.tags,
+        )
+        return UploadResponse.model_validate(upload)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except UploadError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        )
 
 
 @router.delete(
