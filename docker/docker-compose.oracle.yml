@@ -1,0 +1,71 @@
+version: "3.9"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Oracle Cloud "Always Free" deployment — single VM, single container.
+#
+# Why this file is separate from docker-compose.yml:
+#   - This project already uses a cloud-hosted Neon PostgreSQL database, so a
+#     local `postgres` container is not needed.
+#   - The app runs its own in-process APScheduler (see app/scheduler/) — it does
+#     NOT use Celery. The `worker` and `scheduler` services in the original
+#     docker-compose.yml call `app.workflows.scheduler.celery_app`, but the
+#     `celery` package is not in requirements.txt, so those two services would
+#     fail to start (ModuleNotFoundError). This file removes them.
+#   - Alembic migrations run automatically as part of the image's CMD, so no
+#     separate one-shot `migrate` service is needed either.
+#
+# Usage on the Oracle VM:
+#   1. Copy the whole project to the VM (scp/git clone).
+#   2. Put real secrets in a `.env` file next to this compose file (never
+#      commit it). At minimum: DATABASE_URL, GROQ_API_KEY,
+#      DASHBOARD_AUTH_TOKEN, APP_SECRET_KEY, JWT_SECRET_KEY.
+#   3. docker compose -f docker/docker-compose.oracle.yml up -d --build
+#   4. docker compose -f docker/docker-compose.oracle.yml logs -f
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8000"
+      RUN_INTERNAL_SCHEDULERS: "true"
+      # Absolute path — the app's own default ("./storage") is relative and
+      # depends on the process's working directory at the time each file
+      # operation runs, which turned out to be fragile (see the video
+      # rendering "Permission denied" investigation).
+      STORAGE_LOCAL_PATH: "/app/storage"
+    volumes:
+      - app-storage:/app/storage
+    ports:
+      - "80:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # Cap memory so a runaway video-encode can't consume the whole VM.
+    # Set for a 1 GB Oracle "Micro" shape (956Mi usable, ~300Mi needed for
+    # the OS/Docker itself) with a 2GB swap file already configured.
+    # If you move to an Ampere A1 shape with more RAM, raise this.
+    #
+    # IMPORTANT: `deploy.resources.limits` (the old value here) ONLY takes
+    # effect under Docker Swarm (`docker stack deploy`) — plain
+    # `docker compose up`, which is what this file is actually run with,
+    # silently ignores it entirely. That means this container has had NO
+    # real memory ceiling this whole time, despite appearing to. `mem_limit`
+    # is the correct key for a standalone `docker compose up` and is
+    # actually enforced via the container's cgroup.
+    mem_limit: 650m
+    memswap_limit: 900m
+
+volumes:
+  app-storage:
+    driver: local

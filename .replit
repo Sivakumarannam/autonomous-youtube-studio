@@ -1,0 +1,57 @@
+modules = ["python-3.12", "web", "bash"]
+[agent]
+expertMode = true
+
+[nix]
+channel = "stable-25_05"
+packages = ["arrow-cpp", "awsebcli", "c-ares", "cacert", "cairo", "cargo", "chromedriver", "dotnet-sdk", "espeak-ng", "ffmpeg-full", "freetype", "gdb", "ghostscript", "gitFull", "glibcLocales", "gmp", "gobject-introspection", "grpc", "gtk3", "imagemagickBig", "lcms2", "libcxx", "libffi", "libiconv", "libimagequant", "libjpeg", "libsndfile", "libtiff", "libwebp", "libxcrypt", "oneDNN", "openjpeg", "openssl", "pgadmin4", "pkg-config", "postgresql", "qhull", "re2", "rustc", "tcl", "tk", "which", "xcodebuild", "xsimd", "zeromq", "zlib"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd /home/runner/workspace && python3 -m alembic upgrade head && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 5000"
+waitForPort = 5000
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+LLM_PROVIDER = "groq"
+APP_ENV = "production"
+APP_PORT = "5000"
+DEV_AUTO_CREATE_TABLES = "false"
+GROQ_MODEL = "llama-3.3-70b-versatile"
+LOG_FORMAT = "text"
+LOG_LEVEL = "INFO"
+VOICE_ENABLED = "true"
+QUALITY_MIN_SCORE = "70"
+VIDEO_QUALITY_PRESET = "high"
+APP_DEBUG = "false"
+BACKGROUND_MUSIC_ENABLED = "true"
+CAPTION_STYLE = "karaoke"
+USE_STOCK_PHOTOS = "true"
+VOICE_PROVIDER = "auto"
+YOUTUBE_CHANNEL_ID = "UCwUKspuEmjTvqlI9SOTyHkw"
+TELEGRAM_CHAT_ID = "1083422265"
+AUTO_UPLOAD = "true"

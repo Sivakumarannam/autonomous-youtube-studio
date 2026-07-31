@@ -1,0 +1,237 @@
+<!-- Recently Uploaded Videos -->
+<div id="uploaded-videos-content">
+  {% if uploaded_videos %}
+    <div class="uploads-summary">
+      <div class="upload-stat">
+        <div class="stat-value">{{ uploaded_videos|length }}</div>
+        <div class="stat-label">Videos Published</div>
+      </div>
+    </div>
+    
+    <table>
+      <thead>
+        <tr>
+          <th>Video</th>
+          <th>Published</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for upload in uploaded_videos %}
+          <tr class="video-row success-indicator">
+            <td>
+              <div class="video-cell">
+                <div class="video-title">
+                  <span class="title-icon">✓</span>
+                  {{ upload.video.script.seo_title[:50] }}{% if upload.video.script.seo_title|length > 50 %}...{% endif %}
+                </div>
+                <div class="video-meta">
+                  <span class="video-id">{{ upload.youtube_video_id }}</span>
+                  <span class="separator">•</span>
+                  <span class="video-status">{{ upload.status.name }}</span>
+                </div>
+              </div>
+            </td>
+            <td>
+              <div class="timestamp-cell">
+                <div class="timestamp" title="{{ upload.published_at }}">
+                  {{ upload.published_at.strftime('%b %d, %H:%M') }}
+                </div>
+                <div class="time-ago">{{ (now - upload.published_at).total_seconds() | int | humanize_time }}</div>
+              </div>
+            </td>
+            <td>
+              <a href="https://youtube.com/watch?v={{ upload.youtube_video_id }}" 
+                 target="_blank" 
+                 class="watch-link"
+                 title="Watch on YouTube">
+                ▶ Watch
+              </a>
+              <form class="inline"
+                    hx-post="/dashboard/uploads/{{ upload.id }}/delete"
+                    hx-target="#uploaded-videos-panel"
+                    hx-swap="innerHTML"
+                    hx-confirm="Delete this video permanently? This removes it from YouTube AND this dashboard. This cannot be undone.">
+                <button type="submit" class="danger delete-link" title="Delete from YouTube and dashboard">
+                  🗑 Delete
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty">
+      <span style="font-size: 1.2rem; margin-right: 0.5rem;">🚀</span>
+      No videos uploaded yet. Start the pipeline to create and publish videos!
+    </p>
+  {% endif %}
+</div>
+
+<style>
+  #uploaded-videos-content {
+    animation: slideIn 0.3s ease-out;
+  }
+  
+  .uploads-summary {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  
+  .upload-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    align-items: center;
+  }
+  
+  .stat-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--green);
+  }
+  
+  .stat-label {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  
+  .video-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  
+  .video-title {
+    font-weight: 500;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .title-icon {
+    color: var(--green);
+    font-weight: bold;
+  }
+  
+  .video-meta {
+    font-size: 0.75rem;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  
+  .video-id {
+    font-family: 'Monaco', 'Menlo', monospace;
+    background: rgba(91,140,255,0.1);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+  }
+  
+  .video-status {
+    background: rgba(62,207,142,0.15);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    color: var(--green);
+    font-weight: 600;
+  }
+  
+  .separator {
+    color: var(--border);
+  }
+  
+  .timestamp-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  
+  .timestamp {
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+  
+  .time-ago {
+    font-size: 0.75rem;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  
+  .watch-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    background: linear-gradient(135deg, rgba(62,207,142,0.15), rgba(62,207,142,0.08));
+    color: var(--green);
+    border: 1px solid var(--green);
+    border-radius: 6px;
+    text-decoration: none;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+  
+  .watch-link:hover {
+    background: linear-gradient(135deg, rgba(62,207,142,0.25), rgba(62,207,142,0.15));
+    box-shadow: 0 4px 12px rgba(62,207,142,0.2);
+    transform: translateY(-1px);
+  }
+  
+  .watch-link:active {
+    transform: translateY(0);
+  }
+  
+  .delete-link {
+    margin-left: 0.4rem;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.78rem;
+    background: rgba(255,107,107,0.1);
+    color: var(--red);
+    border: 1px solid var(--red);
+  }
+  
+  .delete-link:hover {
+    background: rgba(255,107,107,0.2);
+  }
+
+
+  
+  .video-row {
+    transition: all 0.2s ease;
+  }
+  
+  .video-row:hover {
+    background: linear-gradient(90deg, rgba(91,140,255,0.05), rgba(91,140,255,0.02));
+  }
+  
+  .video-row.success-indicator {
+    animation: successPulse 0.8s ease-out forwards;
+  }
+  
+  @keyframes successPulse {
+    0% { 
+      box-shadow: 0 0 0 0 rgba(62,207,142,0.5);
+      background: rgba(62,207,142,0.1);
+    }
+    70% { 
+      box-shadow: 0 0 0 8px rgba(62,207,142,0);
+    }
+    100% { 
+      box-shadow: 0 0 0 0 rgba(62,207,142,0);
+      background: transparent;
+    }
+  }
+</style>
+

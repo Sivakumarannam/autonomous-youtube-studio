@@ -1,0 +1,156 @@
+2026-07-29T12:19:37.181304Z [info     ] Scene 5: Start=9.04s  Duration=8.64s  End=17.68s [app.agents.video_agent.renderer]
+2026-07-29T12:19:37.377370Z [info     ] Scene 6: Start=17.68s  Duration=2.78s  End=20.46s [app.agents.video_agent.renderer]
+2026-07-29T12:19:37.756243Z [info     ] Scene 7: Start=20.46s  Duration=3.12s  End=23.58s [app.agents.video_agent.renderer]
+2026-07-29T12:19:38.055377Z [info     ] Scene 8: Start=23.58s  Duration=4.98s  End=28.56s [app.agents.video_agent.renderer]
+2026-07-29T12:19:38.450645Z [info     ] Audio duration : 31.95s        [app.agents.video_agent.renderer]
+2026-07-29T12:19:38.450939Z [info     ] ============================== [app.agents.video_agent.renderer]
+2026-07-29T12:19:38.451116Z [info     ] Using Whisper start_seconds for exact scene transitions. [app.agents.video_agent.renderer] scenes=8
+2026-07-29T12:19:38.497213Z [info     ] Voice audio attached to video  [app.agents.video_agent.renderer] audio_path=/app/storage/audio/89c50365-ee8c-4fff-9c13-c4ed14155c02_mixed.mp3 audio_trimmed_to=28.56
+2026-07-29T12:19:39.017293Z [info     ] Hook overlay composited        [app.agents.video_agent.renderer] duration=1.5
+2026-07-29T12:19:39.825360Z [info     ] End-card CTA composited        [app.agents.video_agent.renderer] duration=1.5
+2026-07-29T12:19:39.954643Z [info     ] Encoding video                 [app.agents.video_agent.renderer] crf=28 fps=18 preset=ultrafast quality_profile=draft
+2026-07-29T12:25:07.815240Z [warning  ] Run time of job "VideoPublishScheduler._publish_due_videos (trigger: interval[0:05:00], next run at: 2026-07-29 12:28:53 UTC)" was missed by 0:01:14.748882 [apscheduler.executors.default]
+2026-07-29T12:25:08.202011Z [error    ] Pipeline background task raised outside service.run(). [app.api.services.pipeline_service] error="This Session's transaction has been rolled back due to a previous exception during flush. To begin a new transaction with this Session, first issue Session.rollback(). Original exception was: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.ConnectionDoesNotExistError'>: connection was closed in the middle of operation\n[SQL: UPDATE videos SET video_path=$1::VARCHAR, duration=$2::FLOAT, file_size=$3::INTEGER, status=$4::videostatus, updated_at=$5::TIMESTAMP WITH TIME ZONE WHERE videos.id = $6::UUID]\n[parameters: ('/app/storage/videos/89c50365-ee8c-4fff-9c13-c4ed14155c02.mp4', 28.560000000000002, 9249813, 'complete', datetime.datetime(2026, 7, 29, 12, 25, 7, 768241, tzinfo=datetime.timezone.utc), UUID('d55a44f1-944b-489a-9b6f-3069e583c38a'))]\n(Background on this error at: https://sqlalche.me/e/20/dbapi) (Background on this error at: https://sqlalche.me/e/20/7s2a)" pipeline_run_id=b5c8904b-81c1-4b3b-a418-4c0820a36d46
+INFO:     103.187.217.222:23418 - "GET /dashboard/partials/scheduler-status HTTP/1.1" 200 OK
+INFO:     103.187.217.222:23418 - "GET /dashboard/partials/scheduler-status HTTP/1.1" 200 OK
+INFO:     103.187.217.222:23411 - "GET /dashboard/partials/queue HTTP/1.1" 200 OK
+INFO:     103.187.217.222:23414 - "GET /dashboard/partials/pipeline-runs HTTP/1.1" 200 OK
+INFO:     103.187.217.222:23394 - "GET /dashboard/partials/uploaded-videos HTTP/1.1" 200 OK
+2026-07-29T12:25:10.570367Z [error    ] Unhandled exception            [app.main] exc="(sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) <class 'asyncpg.exceptions._base.InterfaceError'>: cannot call Transaction.commit(): the underlying connection is closed\n(Background on this error at: https://sqlalche.me/e/20/rvf5)" path=/dashboard/pipeline-runs/c726286c-c09d-4155-aa25-9b791f409c2e/retry
+INFO:     103.187.217.222:23417 - "GET /dashboard/partials/channel-automation HTTP/1.1" 200 OK
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 892, in commit
+    self.await_(self._commit_and_discard())
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 871, in _commit_and_discard
+    await self._transaction.commit()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/asyncpg/connresource.py", line 19, in _check
+    self._check_conn_validity(meth.__name__)
+  File "/usr/local/lib/python3.12/site-packages/asyncpg/connresource.py", line 41, in _check_conn_validity
+    raise exceptions.InterfaceError(
+asyncpg.exceptions._base.InterfaceError: cannot call Transaction.commit(): the underlying connection is closed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1147, in _commit_impl
+    self.engine.dialect.do_commit(self.connection)
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 715, in do_commit
+    dbapi_connection.commit()
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 898, in commit
+    self._handle_exception(error)
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.InterfaceError: <class 'asyncpg.exceptions._base.InterfaceError'>: cannot call Transaction.commit(): the underlying connection is closed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 422, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 198, in __call__
+    raise app_exc
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 198, in __call__
+    raise app_exc
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/cors.py", line 96, in __call__
+    await self.simple_response(scope, receive, send, request_headers=headers)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/cors.py", line 154, in simple_response
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 2685, in app
+    await route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 1766, in handle
+    await self.original_router.handle(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 2740, in handle
+    await included_router._handle_selected(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 1786, in _handle_selected
+    await original_route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 1265, in handle
+    await app(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 151, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 133, in app
+    async with AsyncExitStack() as request_stack:
+               ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/contextlib.py", line 754, in __aexit__
+    raise exc_details[1]
+  File "/usr/local/lib/python3.12/contextlib.py", line 737, in __aexit__
+    cb_suppress = await cb(*exc_details)
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/contextlib.py", line 217, in __aexit__
+    await anext(self.gen)
+  File "/app/app/database/connection.py", line 135, in get_db
+    await session.commit()
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 999, in commit
+    await greenlet_spawn(self.sync_session.commit)
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2035, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 1323, in commit
+    trans.commit()
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2642, in commit
+    self._do_commit()
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2747, in _do_commit
+    self._connection_commit_impl()
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2718, in _connection_commit_impl
+    self.connection._commit_impl()
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1149, in _commit_impl
+    self._handle_dbapi_exception(e, None, None, None, None)
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2365, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1147, in _commit_impl
+    self.engine.dialect.do_commit(self.connection)
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 715, in do_commit
+    dbapi_connection.commit()
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 898, in commit
+    self._handle_exception(error)
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.InterfaceError: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) <class 'asyncpg.exceptions._base.InterfaceError'>: cannot call Transaction.commit(): the underlying connection is closed
+(Background on this error at: https://sqlalche.me/e/20/rvf5)
+INFO:     103.187.217.222:23411 - "GET /dashboard/partials/queue HTTP/1.1" 200 OK
+INFO:     103.187.217.222:23394 - "GET /dashboard/partials/uploaded-videos HTTP/1.1" 200 OK
+I'm getting this error in the production environment.
+Also, I'd like to implement a pipeline status view in the staging environment. I want each step to display a green check mark once it's completed—for example: topic isdone green tick mark and after the script is done green tick mark and so on like all stages Similar to the stage/progress view you see in Kubernetes, but I don't want to use Kubernetes itself. I just want a visual pipeline that shows the progress of each stage as it completes.

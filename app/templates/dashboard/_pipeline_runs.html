@@ -1,0 +1,64 @@
+<h2>Pipeline Runs</h2>
+{% if runs %}
+  {% for run in runs %}
+  {% set stages = run_stages[run.id|string] if run_stages is defined else [] %}
+  <div class="run-card">
+    <div class="run-card-header">
+      <span class="badge {{ run.status.value }}">{{ run.status.value }}</span>
+      {% if run.script %}
+        <span style="font-size:0.82rem;font-weight:600;">{{ run.script.seo_title or "—" }}</span>
+      {% else %}
+        <span style="font-size:0.82rem;color:var(--muted);">run {{ run.id|string|truncate(8, true, '') }}</span>
+      {% endif %}
+      {% if run.retry_count > 0 %}
+        <span class="badge pending" title="Retry count">↺ {{ run.retry_count }}/{{ run.max_retries }}</span>
+      {% endif %}
+      <span class="run-card-meta">{{ run.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+    </div>
+
+    <!-- Pipeline stage progress — horizontal Kubernetes-style -->
+    {% if stages %}
+    <div class="pipeline-stepper">
+      {% for stage in stages %}
+        <div class="stage {{ stage.state }}" title="{{ stage.name|capitalize }} — {{ stage.state }}">
+          <div class="stage-icon">
+            {% if stage.state == 'done' %}&#10003;
+            {% elif stage.state == 'failed' %}&#10007;
+            {% elif stage.state == 'active' %}&bull;
+            {% else %}&circ;
+            {% endif %}
+          </div>
+          <div class="stage-label">{{ stage.name }}</div>
+          {% if stage.state == 'failed' and run.error_message %}
+            <div class="stage-error" title="{{ run.error_message }}">
+              &#9888; {{ run.error_message|truncate(48, true, '…') }}
+            </div>
+          {% endif %}
+        </div>
+        {% if not loop.last %}
+          <div class="stage-connector {{ 'done' if stage.state == 'done' else ('active' if stage.state == 'active' else '') }}"></div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Actions -->
+    <div class="run-card-actions">
+      {% if run.status.value in ("failed", "running") %}
+      <form class="inline" hx-post="/dashboard/pipeline-runs/{{ run.id }}/retry"
+            hx-target="#pipeline-runs-panel" hx-swap="innerHTML"
+            hx-confirm="Retry this run? This starts a brand new attempt for the same topic — it doesn't resume mid-stage.">
+        <button type="submit" title="Self-heal: start a fresh attempt">🔄 Retry</button>
+      </form>
+      {% endif %}
+      <form class="inline" hx-post="/dashboard/pipeline-runs/{{ run.id }}/delete"
+            hx-target="#pipeline-runs-panel" hx-swap="innerHTML"
+            hx-confirm="Remove this run from the dashboard? This does NOT touch YouTube — if it already published a video, that video stays exactly as-is.">
+        <button type="submit" class="danger" title="Dashboard only — never touches YouTube">🗑 Delete</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+<p class="empty">No pipeline runs yet.</p>
+{% endif %}

@@ -1,0 +1,77 @@
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem">
+  <h2 style="margin:0">Notification Channels</h2>
+  <button
+    hx-post="/dashboard/notifications/test"
+    hx-swap="none"
+    hx-indicator="#notif-spinner"
+    style="padding:0.4rem 0.9rem;font-size:0.82rem;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:0.4rem"
+    onclick="this.textContent='Sending…';this.disabled=true;setTimeout(()=>{this.textContent='✉️ Test All';this.disabled=false},4000)"
+  >✉️ Test All</button>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:0.75rem">
+  {% set channels = [
+    ("Email",    notification_email_enabled,    "✉️"),
+    ("Slack",    notification_slack_enabled,    "💬"),
+    ("Discord",  notification_discord_enabled,  "🎮"),
+    ("Telegram", notification_telegram_enabled, "📱"),
+    ("Instagram",instagram_enabled,             "📸"),
+  ] %}
+  {% for name, enabled, icon in channels %}
+  <div style="display:flex;align-items:center;gap:0.6rem;padding:0.6rem 0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+    <span>{{ icon }}</span>
+    <span style="flex:1;font-size:0.9rem">{{ name }}</span>
+    {% if enabled %}
+      <span style="color:var(--green);font-size:0.78rem;font-weight:600">ON</span>
+    {% else %}
+      <span style="color:var(--muted);font-size:0.78rem">OFF</span>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+<p style="margin:0.75rem 0 0;font-size:0.78rem;color:var(--muted)">
+  Channels auto-enable when their secrets are set. WhatsApp: requires CallMeBot API key (<a href="https://www.callmebot.com/blog/free-api-whatsapp-messages/" target="_blank" style="color:var(--accent)">setup guide</a>).
+</p>
+
+{# ── Instagram cross-post queue ─────────────────────────────────────── #}
+{% if instagram_enabled %}
+<div style="margin-top:1rem;padding:0.85rem 1rem;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:0.85rem">
+  <strong style="display:flex;align-items:center;gap:0.4rem">📸 Instagram Reels Queue</strong>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;margin-top:0.6rem;text-align:center">
+    <div style="padding:0.5rem;background:var(--surface);border-radius:6px">
+      <div style="font-size:1.3rem;font-weight:700;color:var(--accent)">{{ ig_posted_count }}</div>
+      <div style="font-size:0.72rem;color:var(--muted)">Posted</div>
+    </div>
+    <div style="padding:0.5rem;background:var(--surface);border-radius:6px">
+      <div style="font-size:1.3rem;font-weight:700;color:#e6c84a">{{ ig_pending_count }}</div>
+      <div style="font-size:0.72rem;color:var(--muted)">Pending</div>
+    </div>
+    <div style="padding:0.5rem;background:var(--surface);border-radius:6px">
+      <div style="font-size:0.82rem;font-weight:600;color:var(--text)">
+        {% if ig_next_scheduled %}
+          {{ ig_next_scheduled.strftime("%b %d %H:%M") }} UTC
+        {% else %}
+          —
+        {% endif %}
+      </div>
+      <div style="font-size:0.72rem;color:var(--muted)">Next post</div>
+    </div>
+  </div>
+  <p style="margin:0.5rem 0 0;font-size:0.72rem;color:var(--muted)">
+    ⚠️ Instagram access tokens expire every ~60 days — refresh <code>INSTAGRAM_ACCESS_TOKEN</code> in Secrets when needed.
+  </p>
+</div>
+{% endif %}
+
+{# ── Post-upload manual action reminder banner (shown after uploads) ─── #}
+{% if pending_manual_actions %}
+<div style="margin-top:1rem;padding:0.85rem 1rem;background:#1a1a0a;border:1px solid #4a4000;border-radius:8px;font-size:0.85rem;color:#e6c84a">
+  <strong>📌 Manual actions required in YouTube Studio:</strong>
+  <ul style="margin:0.4rem 0 0 1.2rem;padding:0;color:#d4b83a">
+    <li>Pin the auto-posted comment on each newly uploaded video</li>
+    <li>Add an end screen (cards/subscribe button) via YouTube Studio → Editor → End screen</li>
+  </ul>
+  <p style="margin:0.5rem 0 0;font-size:0.78rem;color:#a09040">
+    Affects: {{ pending_manual_actions | join(", ") }}
+  </p>
+</div>
+{% endif %}

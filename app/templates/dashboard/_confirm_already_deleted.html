@@ -1,0 +1,58 @@
+<div id="uploaded-videos-content">
+  <div class="already-deleted-confirm">
+    <p class="warning-icon">⚠️</p>
+    <p class="confirm-message">
+      This video has already been deleted directly on YouTube.<br>
+      Would you also like to remove it from the dashboard?
+    </p>
+    <div class="confirm-actions">
+      <form class="inline"
+            hx-post="/dashboard/uploads/{{ upload_id }}/delete-local"
+            hx-target="#uploaded-videos-panel"
+            hx-swap="innerHTML">
+        <button type="submit" class="danger">Yes, remove from dashboard</button>
+      </form>
+      <button type="button"
+              class="cancel-btn"
+              hx-get="/dashboard/partials/uploaded-videos"
+              hx-target="#uploaded-videos-panel"
+              hx-swap="innerHTML">
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
+
+<style>
+  .already-deleted-confirm {
+    text-align: center;
+    padding: 2rem 1rem;
+  }
+  .warning-icon {
+    font-size: 2rem;
+    margin: 0 0 0.5rem;
+  }
+  .confirm-message {
+    color: var(--text);
+    font-size: 0.9rem;
+    margin: 0 0 1.25rem;
+    line-height: 1.5;
+  }
+  .confirm-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+  }
+  .cancel-btn {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+  .cancel-btn:hover {
+    background: rgba(139,144,163,0.1);
+  }
+</style>

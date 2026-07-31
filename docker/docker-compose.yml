@@ -1,0 +1,210 @@
+version: "3.9"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Autonomous YouTube Studio — Docker Compose
+# Zero-cost local infrastructure: PostgreSQL + Redis + API + Worker + Scheduler
+# ──────────────────────────────────────────────────────────────────────────────
+
+x-app-env: &app-env
+  APP_NAME: "Autonomous YouTube Studio"
+  APP_ENV: ${APP_ENV:-development}
+  APP_DEBUG: ${APP_DEBUG:-true}
+  APP_SECRET_KEY: ${APP_SECRET_KEY:-dev-secret-key-change-in-production}
+  APP_HOST: "0.0.0.0"
+  APP_PORT: "8000"
+
+  DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-youtube_studio}"
+  DATABASE_SYNC_URL: "postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-youtube_studio}"
+
+  REDIS_URL: "redis://redis:6379/0"
+  CELERY_BROKER_URL: "redis://redis:6379/1"
+  CELERY_RESULT_BACKEND: "redis://redis:6379/2"
+
+  LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+  STORAGE_BACKEND: "local"
+  STORAGE_LOCAL_PATH: "/app/storage"
+
+  AUTO_GENERATE: ${AUTO_GENERATE:-true}
+  AUTO_UPLOAD: ${AUTO_UPLOAD:-false}
+  AUTO_ANALYTICS: ${AUTO_ANALYTICS:-true}
+  AUTO_OPTIMIZATION: ${AUTO_OPTIMIZATION:-true}
+
+  QUALITY_MIN_SCORE: ${QUALITY_MIN_SCORE:-70}
+  SEO_MIN_SCORE: ${SEO_MIN_SCORE:-60}
+
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-jwt-dev-secret-change-in-production}
+  JWT_ALGORITHM: "HS256"
+  JWT_EXPIRE_MINUTES: "1440"
+
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+
+  NOTIFICATION_EMAIL_ENABLED: "false"
+  NOTIFICATION_SLACK_ENABLED: "false"
+  NOTIFICATION_DISCORD_ENABLED: "false"
+  NOTIFICATION_TELEGRAM_ENABLED: "false"
+
+x-app-volumes: &app-volumes
+  - app-storage:/app/storage
+  - ./:/app
+
+x-app-depends: &app-depends
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
+services:
+  # ────────────────────────────────────────────────────────────────────────────
+  # PostgreSQL
+  # ────────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-youtube_studio}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:-youtube_studio}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Redis
+  # ────────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Migration runner — runs once then exits
+  # ────────────────────────────────────────────────────────────────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    environment:
+      <<: *app-env
+    volumes: *app-volumes
+    depends_on: *app-depends
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # FastAPI application
+  # ────────────────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    volumes: *app-volumes
+    ports:
+      - "8000:8000"
+    depends_on:
+      <<: *app-depends
+      migrate:
+        condition: service_completed_successfully
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --workers
+      - "2"
+      - --loop
+      - uvloop
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Celery worker — processes generation tasks
+  # ────────────────────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    volumes: *app-volumes
+    depends_on:
+      <<: *app-depends
+      migrate:
+        condition: service_completed_successfully
+    command:
+      - celery
+      - -A
+      - app.workflows.scheduler.celery_app
+      - worker
+      - --loglevel=info
+      - --queues=topics,research,scripts,default
+      - --concurrency=2
+      - --max-tasks-per-child=100
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Celery Beat — periodic task scheduler
+  # ────────────────────────────────────────────────────────────────────────────
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    volumes: *app-volumes
+    depends_on:
+      <<: *app-depends
+      migrate:
+        condition: service_completed_successfully
+    command:
+      - celery
+      - -A
+      - app.workflows.scheduler.celery_app
+      - beat
+      - --loglevel=info
+      - --scheduler
+      - celery.beat:PersistentScheduler
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  app-storage:
+    driver: local

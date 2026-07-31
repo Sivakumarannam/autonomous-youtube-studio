@@ -1,0 +1,22 @@
+<h2>Channel Reset Complete</h2>
+<div class="reset-summary">
+  <p><strong>{{ result.channel_name }}</strong> was reset.</p>
+  <ul>
+    <li>Scripts deleted: {{ result.scripts_deleted }}</li>
+    <li>Videos deleted: {{ result.videos_deleted }}</li>
+    <li>Uploads deleted: {{ result.uploads_deleted }}</li>
+    <li>Videos removed from YouTube: {{ result.youtube_deleted }}</li>
+    {% if result.youtube_failed %}
+    <li class="danger">
+      YouTube deletions that FAILED (still exist on YouTube — remove manually):
+      <ul>
+        {% for failure in result.youtube_failed %}
+        <li>{{ failure }}</li>
+        {% endfor %}
+      </ul>
+    </li>
+    {% endif %}
+  </ul>
+</div>
+
+{% include "dashboard/_channel_automation.html" %}

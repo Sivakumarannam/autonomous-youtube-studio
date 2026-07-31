@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment Variables
+.env
+.env.example
+
+# Logs
+*.log
+
+# Database
+*.sqlite3
+
+# Pytest
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Alembic cache
+*.pyc
+
+# Generated media — large runtime-produced files; created automatically at startup
+storage/videos/
+storage/audio/
+storage/thumbnails/
+storage/image_cache/
+storage/scripts/
+storage/frames/
+storage/presenter/
+storage/cache/
+storage/vector_db/
+
+# OS
+.DS_Store
+Thumbs.db

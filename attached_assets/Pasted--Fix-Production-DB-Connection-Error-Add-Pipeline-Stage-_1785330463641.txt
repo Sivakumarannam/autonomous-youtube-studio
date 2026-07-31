@@ -1,0 +1,158 @@
+# Fix Production DB Connection Error + Add Pipeline Stage Progress View
+
+Two related changes: (1) fix the production `InterfaceError: connection was closed` crash, and (2) add a visual pipeline stage progress view to the dashboard.
+
+---
+
+## Issue 1: Production DB Connection Closed During Video Render
+
+### Root Cause Analysis
+
+The video render stage (`self._renderer.render(...)` at [service.py:419](file:///e:/autonomous-youtube-studio/autonomous-youtube-studio/app/agents/video_agent/service.py#L419)) is **synchronous CPU-bound work** that blocks the event loop for **~5.5 minutes** (from `12:19:38` to `12:25:07` in the logs). During this time:
+
+1. The Neon serverless Postgres drops the idle connection (Neon's idle timeout is ~5 minutes for free/pro tiers)
+2. When `mark_complete()` tries to flush/commit the UPDATE, the underlying asyncpg connection is already closed → `InterfaceError`
+3. The current `pool_recycle=180` setting in [connection.py:94](file:///e:/autonomous-youtube-studio/autonomous-youtube-studio/app/database/connection.py#L94) only affects **idle pool connections** — it does NOT help a connection that is **checked out** and held for the full render duration
+
+> [!IMPORTANT]
+> `pool_pre_ping` and `pool_recycle` only protect connections **at checkout time**. A connection held checked-out for 5+ minutes with no DB activity is invisible to both mechanisms. The render blocks the event loop, so there is zero DB traffic on that connection for the entire render, and Neon silently drops it.
+
+### Proposed Fix
+
+**Acquire a fresh session for the post-render DB write** instead of reusing the session that was checked out before the render started. The render itself makes no DB calls, so it doesn't need a session at all.
+
+#### [MODIFY] [service.py](file:///e:/autonomous-youtube-studio/autonomous-youtube-studio/app/agents/video_agent/service.py)
+
+In `VideoAgentService.run_for_script()` (line ~419-472):
+
+1. **Before the render call**: commit/close the current session's transaction so the checked-out connection is returned to the pool. This prevents the 5-minute idle hold.
+2. **After the render**: open a fresh session from the pool to do the `mark_complete` / `mark_failed` write. Since this is a freshly checked-out connection, `pool_pre_ping=True` validates it.
+
+Specifically:
+```python
+# Flush pending state before the long render so nothing depends on
+# the current connection surviving the render.
+await self._session.commit()
+
+render_result = self._renderer.render(...)  # ~5 min, no DB needed
+
+# The old connection may be dead. Open a FRESH session for the
+# post-render write — pool_pre_ping validates the new checkout.
+from app.database.connection import _get_session_factory
+async with _get_session_factory()() as fresh_session:
+    video_repository = VideoRepository(fresh_session)
+    video = await video_repository.get_or_raise(video.id)
+    if render_result.success:
+        video = await video_repository.mark_complete(...)
+    else:
+        video = await video_repository.mark_failed(...)
+    await fresh_session.commit()
+```
+
+#### [MODIFY] [service.py](file:///e:/autonomous-youtube-studio/autonomous-youtube-studio/app/agents/pipeline_agent/service.py)
+
+In `_execute_stages()` at the video stage (lines 360-391): similarly, after calling `_render_video()`, get a fresh session before doing the post-render `video_repo.get_by_script_id()` and `pipeline_repo.update()`. The pipeline service already has the pattern of committing between stages — we just need to ensure the session connection is still alive after the long render.
+
+Add a `_refresh_session()` helper that closes the old session and opens a new one from the factory, reassigning `self._session` and all repositories. This isolates the long render from the post-render DB writes.
+
+---
+
+## Issue 2: Pipeline Stage Progress View
+
+### Design
+
+Add a visual pipeline progress stepper to the dashboard that shows all stages as a horizontal pipeline with check marks (✅) for completed stages, a spinner for the active stage, and gray circles for pending stages — similar to Kubernetes/CI pipeline views.
+
+The pipeline stages in order are: **script → quality → seo → voice → video → upload → analytics → complete**
+
+### Data Model
+
+> [!IMPORTANT]
+> **No schema migration needed.** We already have `current_stage`, `failed_stage`, `script_id`, `video_id`, `upload_id`, and `status` on the `PipelineRun` model. We can derive which stages are completed by comparing the `current_stage` position in the ordered list. A completed stage is any stage that comes *before* the current stage. The `failed_stage` indicates which stage failed.
+
+We'll add a new JSON column `completed_stages` (type `Text`, stores JSON array) to track the exact stages that completed during this run. This is more reliable than inference because stage ordering could change, and it gives an explicit audit trail. **However**, this requires a migration. 
+
+**Simpler approach (no migration):** Infer completed stages from the ordered stage list + `current_stage` + artifact IDs. A stage is "done" if it comes before `current_stage` in the pipeline order.
+
+### Implementation
+
+#### [NEW] [_pipeline_progress.html](file:///e:/autonomous-youtube-studio/autonomous-youtube-studio/app/templates/dashboard/_pipeline_progress.html)
+
+A new partial template for the pipeline stage progress stepper. Each pipeline run gets an expandable row showing:
+
+```
+[✅ Script] ─── [✅ Quality] ─── [✅ SEO] ─── [✅ Voice] ─── [⏳ Video] ─── [○ Upload] ─── [○ Analytics] ─── [○ Complete]
+```
+
+Visual states:
+- **✅ Green check** — stage completed
+- **⏳ Spinning** — currently executing (animated pulse)  
+- **❌ Red X** — stage failed
+- **○ Gray circle** — not yet reached
+
+Styled with CSS in [base.html](file:///e:/autonomous-youtube-studio/autonomous-youtube-studio/app/templates/base.html):
+- Horizontal flexbox pipeline with connecting lines
+- Green/accent/red/gray color coding
+- Animated pulse on the active stage
+- Smooth transitions on HTMX swap
+
+#### [MODIFY] [_pipeline_runs.html](file:///e:/autonomous-youtube-studio/autonomous-youtube-studio/app/templates/dashboard/_pipeline_runs.html)
+
+Replace the existing plain table with a card-based layout where each pipeline run shows:
+- Header row with status badge, topic name, script type, timestamps
+- Expandable **stage progress stepper** (the new visual pipeline)
+- Action buttons (retry/delete)
+
+#### [MODIFY] [base.html](file:///e:/autonomous-youtube-studio/autonomous-youtube-studio/app/templates/base.html)
+
+Add CSS for the pipeline stepper component:
+- `.pipeline-stepper` — horizontal flex container
+- `.stage` — individual stage node (circle + label)
+- `.stage.done` — green check
+- `.stage.active` — pulsing accent  
+- `.stage.failed` — red X
+- `.stage.pending` — gray
+- `.stage-connector` — the line between stages
+
+#### [MODIFY] [dashboard.py](file:///e:/autonomous-youtube-studio/autonomous-youtube-studio/app/api/routes/dashboard.py)
+
+Add a helper function `_pipeline_stage_context(run)` that returns the stage progress data for a pipeline run:
+
+```python
+PIPELINE_STAGES = ["script", "quality", "seo", "voice", "video", "upload", "analytics", "complete"]
+
+def _pipeline_stage_context(run):
+    stages = []
+    current_idx = PIPELINE_STAGES.index(run.current_stage) if run.current_stage in PIPELINE_STAGES else -1
+    for i, stage_name in enumerate(PIPELINE_STAGES):
+        if run.status.value == "complete":
+            state = "done"
+        elif stage_name == run.failed_stage:
+            state = "failed"
+        elif run.current_stage and i < current_idx:
+            state = "done"
+        elif stage_name == run.current_stage:
+            state = "active"
+        else:
+            state = "pending"
+        stages.append({"name": stage_name, "state": state})
+    return stages
+```
+
+Add a new partial endpoint `/partials/pipeline-progress/{run_id}` for individual run progress polling.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- No existing test suite references were found for these specific modules, but the changes are narrowly scoped.
+
+### Manual Verification
+1. **DB Connection Fix**: Deploy to staging, trigger a pipeline run with a long video render, verify the run completes without `InterfaceError` and the video row is correctly marked `COMPLETE`.
+2. **Pipeline Progress View**: 
+   - Trigger a pipeline run from the dashboard
+   - Verify the stage stepper appears with animated progress  
+   - Verify completed stages show green checks in real-time (HTMX auto-refresh)
+   - Verify failed runs show the red X on the failed stage
+   - Verify completed runs show all stages as green checks

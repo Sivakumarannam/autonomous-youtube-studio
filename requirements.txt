@@ -1,0 +1,79 @@
+# ── Web framework ──────────────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+python-multipart
+jinja2
+websockets
+aiohttp
+aiofiles
+
+# ── Rate limiting & security ───────────────────────────────────────────────────
+slowapi
+bcrypt
+passlib
+python-jose[cryptography]
+
+# ── Database ───────────────────────────────────────────────────────────────────
+sqlalchemy[asyncio]
+alembic
+aiosqlite
+asyncpg
+
+# ── Settings & validation ──────────────────────────────────────────────────────
+pydantic
+pydantic-settings
+python-dotenv
+
+# ── Logging & metrics ──────────────────────────────────────────────────────────
+structlog
+prometheus-client
+
+# ── Scheduler ─────────────────────────────────────────────────────────────────
+apscheduler
+
+# ── LLM / AI ──────────────────────────────────────────────────────────────────
+httpx
+tenacity
+google-genai
+groq
+gradio-client
+
+# ── Video & image ─────────────────────────────────────────────────────────────
+moviepy
+pillow
+numpy
+
+# ── Text-to-speech ────────────────────────────────────────────────────────────
+gtts
+pyttsx3
+kokoro-onnx
+soundfile
+pydub
+
+# ── Speech recognition / karaoke captions ─────────────────────────────────────
+# faster-whisper uses CTranslate2 (CPU int8) — ~75 MB, no GPU required.
+faster-whisper
+
+# ── YouTube API ───────────────────────────────────────────────────────────────
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
+google-api-python-client
+
+# ── Research & scraping ───────────────────────────────────────────────────────
+beautifulsoup4
+trafilatura
+requests
+asyncpraw
+yt-dlp
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest
+pytest-asyncio
+pytest-cov
+
+# ── Optional: RAG research pipeline ───────────────────────────────────────────
+# NOT included here. See requirements-rag.txt.
+# Enable with: pip install torch --index-url https://download.pytorch.org/whl/cpu
+#              pip install -r requirements-rag.txt
+# Then set RAG_RESEARCH_ENABLED=true.

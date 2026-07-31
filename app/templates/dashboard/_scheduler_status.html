@@ -1,0 +1,34 @@
+<h2>Scheduler Status</h2>
+<div class="stat-row">
+  <div class="stat">
+    <span class="value">{{ interval_minutes }} min</span>
+    <span class="label">Tick Interval</span>
+  </div>
+  <div class="stat">
+    <span class="value">{{ next_run_at or "—" }}</span>
+    <span class="label">Next Tick</span>
+  </div>
+  {% if last_tick %}
+  <div class="stat">
+    <span class="value">{{ last_tick.ran_at.strftime("%Y-%m-%d %H:%M:%S") }}</span>
+    <span class="label">Last Tick At</span>
+  </div>
+  <div class="stat">
+    <span class="value">{{ last_tick.due_count }}</span>
+    <span class="label">Due</span>
+  </div>
+  <div class="stat">
+    <span class="value">{{ last_tick.succeeded }}</span>
+    <span class="label">Succeeded</span>
+  </div>
+  <div class="stat">
+    <span class="value">{{ last_tick.failed }}</span>
+    <span class="label">Failed</span>
+  </div>
+  {% else %}
+  <div class="stat">
+    <span class="value">—</span>
+    <span class="label">No ticks yet</span>
+  </div>
+  {% endif %}
+</div>

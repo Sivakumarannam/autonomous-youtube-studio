@@ -1,0 +1,50 @@
+<h2>Channel Automation</h2>
+{% if not channel_automations %}
+  <p class="empty">Create at least one channel via the API to enable automation.</p>
+{% else %}
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Channel</th>
+      <th>Status</th>
+      <th>Phase</th>
+      <th>Active Days</th>
+      <th>Last Run</th>
+      <th>Next Long Video</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in channel_automations %}
+    <tr>
+      <td>
+        {{ row.channel.name }}
+        {% if row.channel.is_archived %}
+          <br><small>Archived — Start to resume</small>
+        {% endif %}
+      </td>
+      <td><span class="badge {{ row.automation.automation_status.value }}">{{ row.automation.automation_status.value }}</span></td>
+      <td>{{ row.phase }}</td>
+      <td>{{ row.automation.cumulative_active_days }}</td>
+      <td>{{ row.automation.last_run_date or "—" }}</td>
+      <td>{{ row.next_long or "—" }}</td>
+      <td>
+        <form class="inline" hx-post="/dashboard/channels/{{ row.channel.id }}/automation/start" hx-target="#channel-automation-panel" hx-swap="innerHTML">
+          <button type="submit" {% if row.automation.automation_status.value == "running" %}disabled{% endif %}>Start</button>
+        </form>
+        <form class="inline" hx-post="/dashboard/channels/{{ row.channel.id }}/automation/pause" hx-target="#channel-automation-panel" hx-swap="innerHTML">
+          <button type="submit" {% if row.automation.automation_status.value != "running" %}disabled{% endif %}>Pause</button>
+        </form>
+        <form class="inline" hx-post="/dashboard/channels/{{ row.channel.id }}/automation/delete" hx-target="#channel-automation-panel" hx-swap="innerHTML" hx-confirm="Archive this channel and stop automation? History is kept.">
+          <button type="submit" class="danger">Delete</button>
+        </form>
+        <form class="inline" hx-post="/dashboard/channels/{{ row.channel.id }}/automation/reset" hx-target="#channel-automation-panel" hx-swap="innerHTML" hx-confirm="RESET '{{ row.channel.name }}'? This permanently deletes every script, video, and upload for this channel AND deletes every matching video from YouTube itself. This CANNOT be undone. Type-check yourself before continuing — are you sure?">
+          <button type="submit" class="danger">⚠ Reset</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+

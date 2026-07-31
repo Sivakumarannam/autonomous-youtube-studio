@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Autonomous YouTube Studio — Dashboard{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4/dist/ext/ws.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #161925;
+      --border: #262b3a;
+      --text: #e6e8ef;
+      --muted: #8b90a3;
+      --accent: #5b8cff;
+      --green: #3ecf8e;
+      --red: #ff6b6b;
+      --amber: #f5c04c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    header {
+      padding: 1.25rem 2rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { font-size: 1.15rem; margin: 0; font-weight: 600; }
+    #ws-indicator {
+      font-size: 0.8rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    #ws-indicator.connected { color: var(--green); border-color: var(--green); }
+    #ws-indicator.disconnected { color: var(--red); border-color: var(--red); }
+    main {
+      padding: 1.5rem 2rem 3rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    section.panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+    }
+    section.panel.full { grid-column: 1 / -1; }
+    section.panel h2 {
+      margin: 0 0 0.9rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { text-align: left; padding: 0.5rem 0.4rem; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 500; }
+    .badge {
+      display: inline-block;
+      padding: 0.1rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .badge.pending, .badge.draft { background: rgba(139,144,163,0.15); color: var(--muted); }
+    .badge.running, .badge.approved, .badge.uploading { background: rgba(91,140,255,0.15); color: var(--accent); }
+    .badge.complete, .badge.published, .badge.scheduled { background: rgba(62,207,142,0.15); color: var(--green); }
+    .badge.failed, .badge.rejected { background: rgba(255,107,107,0.15); color: var(--red); }
+    .badge.paused, .badge.stopped { background: rgba(255,193,7,0.15); color: #ffc107; }
+    form.inline { display: inline; }
+    button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+    button.danger { background: var(--red); }
+    button:hover { opacity: 0.85; }
+    .stat-row { display: flex; gap: 2rem; flex-wrap: wrap; }
+    .stat { display: flex; flex-direction: column; }
+    .stat .value { font-size: 1.6rem; font-weight: 700; }
+    .stat .label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; }
+    .new-run-form { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: end; }
+    .field { display: flex; flex-direction: column; gap: 0.25rem; }
+    .field label { font-size: 0.75rem; color: var(--muted); }
+    select, input {
+      background: #0f1117;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.4rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+    }
+    .empty { color: var(--muted); font-size: 0.85rem; padding: 0.75rem 0; }
+    .flash { color: var(--green); font-size: 0.8rem; margin-top: 0.5rem; }
+    .error { color: var(--red); font-size: 0.8rem; margin-top: 0.5rem; }
+    
+    /* ─────────────────────────────────────────────────────────────
+       Enhanced Animations & Transitions
+       ───────────────────────────────────────────────────────────── */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-8px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    @keyframes shimmer {
+      0% { background-position: -1000px 0; }
+      100% { background-position: 1000px 0; }
+    }
+    
+    /* HTMX content swap animations */
+    .htmx-swapping { opacity: 0; transition: opacity 0.2s ease-out; }
+    .htmx-settling { opacity: 1; animation: fadeIn 0.3s ease-in; }
+    
+    /* Panel hover effects */
+    section.panel {
+      transition: all 0.2s ease;
+      border-color: var(--border);
+    }
+    section.panel:hover {
+      border-color: rgba(91,140,255,0.3);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    
+    /* Button enhancements */
+    button {
+      transition: all 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    button:active {
+      transform: scale(0.96);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    /* Loading indicator */
+    .htmx-request.htmx-indicator {
+      display: inline-block;
+    }
+    .htmx-indicator {
+      display: none;
+      width: 20px;
+      height: 20px;
+      border: 2px solid rgba(91,140,255,0.3);
+      border-top: 2px solid var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    /* Badge animations */
+    .badge {
+      transition: all 0.2s ease;
+    }
+    .badge:hover {
+      transform: scale(1.05);
+    }
+    
+    /* Table row hover */
+    table tbody tr {
+      transition: background 0.15s ease;
+    }
+    table tbody tr:hover {
+      background: rgba(91,140,255,0.08);
+    }
+    
+    /* Success animation for new uploads */
+    @keyframes successPulse {
+      0% { box-shadow: 0 0 0 0 rgba(62,207,142,0.7); }
+      70% { box-shadow: 0 0 0 10px rgba(62,207,142,0); }
+      100% { box-shadow: 0 0 0 0 rgba(62,207,142,0); }
+    }
+    .success-indicator {
+      animation: successPulse 1s ease-out;
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+       Pipeline Stage Progress Stepper — horizontal Kubernetes-style
+       ───────────────────────────────────────────────────────────── */
+    .pipeline-stepper {
+      display: flex;
+      align-items: flex-start;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      gap: 0;
+      padding: 1rem 0 0.75rem;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.35rem;
+      flex-shrink: 0;
+      min-width: 72px;
+    }
+    .stage-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      font-weight: 800;
+      border: 3px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      transition: all 0.25s ease;
+      position: relative;
+      z-index: 1;
+    }
+    .stage-label {
+      font-size: 0.62rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+    .stage-error {
+      font-size: 0.58rem;
+      color: var(--red);
+      text-align: center;
+      max-width: 86px;
+      white-space: normal;
+      word-break: break-word;
+      line-height: 1.3;
+      margin-top: 0.1rem;
+    }
+    /* States */
+    .stage.done .stage-icon {
+      background: #22c55e;
+      border-color: #22c55e;
+      color: #fff;
+    }
+    .stage.done .stage-label { color: #22c55e; }
+    .stage.active .stage-icon {
+      background: rgba(91,140,255,0.18);
+      border-color: var(--accent);
+      color: var(--accent);
+      animation: stagePulse 1.4s ease-in-out infinite;
+    }
+    .stage.active .stage-label { color: var(--accent); font-weight: 700; }
+    .stage.failed .stage-icon {
+      background: #ef4444;
+      border-color: #ef4444;
+      color: #fff;
+    }
+    .stage.failed .stage-label { color: #ef4444; }
+    .stage.pending .stage-icon {
+      background: transparent;
+      border-color: var(--border);
+      color: var(--muted);
+      opacity: 0.45;
+    }
+    @keyframes stagePulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(91,140,255,0.55); }
+      50%       { box-shadow: 0 0 0 7px rgba(91,140,255,0); }
+    }
+    /* Connector line between stages — sits vertically centred on the circle */
+    .stage-connector {
+      flex: 1;
+      min-width: 18px;
+      height: 4px;
+      background: var(--border);
+      margin-top: 18px;   /* (40px circle / 2) - (4px line / 2) = 18px */
+      flex-shrink: 1;
+      transition: background 0.3s ease;
+    }
+    .stage-connector.done  { background: #22c55e; }
+    .stage-connector.active { background: linear-gradient(90deg, #22c55e 50%, var(--border) 50%); }
+
+    /* Run card layout */
+    .run-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.6rem;
+      transition: border-color 0.2s ease;
+    }
+    .run-card:hover { border-color: rgba(91,140,255,0.3); }
+    .run-card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .run-card-meta {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-left: auto;
+    }
+    .run-card-actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+  </style>
+</head>
+<body hx-ext="ws" ws-connect="/ws/pipeline">
+  <header>
+    <h1>Autonomous YouTube Studio — Ops Dashboard</h1>
+    <div style="display:flex;align-items:center;gap:1rem;">
+      <span id="ws-indicator">connecting…</span>
+      <a href="/logout" style="font-size:0.8rem;color:var(--muted);text-decoration:none;padding:0.25rem 0.6rem;border:1px solid var(--border);border-radius:999px;" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--muted)'">Sign out</a>
+    </div>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <script>
+    // Minimal WS -> HTMX trigger bridge.
+    // We rely on htmx's ws extension purely for the connection lifecycle;
+    // we parse messages ourselves and fire named events that the panels
+    // below listen for via hx-trigger="... from:body".
+    document.body.addEventListener('htmx:wsOpen', () => {
+      const el = document.getElementById('ws-indicator');
+      el.textContent = 'live';
+      el.className = 'connected';
+    });
+    document.body.addEventListener('htmx:wsClose', () => {
+      const el = document.getElementById('ws-indicator');
+      el.textContent = 'disconnected';
+      el.className = 'disconnected';
+    });
+    document.body.addEventListener('htmx:wsAfterMessage', (evt) => {
+      try {
+        const data = JSON.parse(evt.detail.message);
+        if (data.type === 'pipeline_run') {
+          htmx.trigger(document.body, 'pipeline-update');
+        } else if (data.type === 'upload') {
+          htmx.trigger(document.body, 'upload-update');
+        } else if (data.type === 'scheduler_tick') {
+          htmx.trigger(document.body, 'scheduler-update');
+        }
+      } catch (e) {
+        // ignore malformed messages
+      }
+    });
+  </script>
+</body>
+</html>

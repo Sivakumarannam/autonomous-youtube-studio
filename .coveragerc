@@ -1,0 +1,63 @@
+[run]
+source = app
+branch = true
+omit =
+    */migrations/*
+    */alembic/*
+    app/database/migrations/*
+    app/__init__.py
+    app/core/__init__.py
+    app/database/__init__.py
+    app/llm_providers/__init__.py
+    app/agents/*/__init__.py
+    app/api/__init__.py
+    app/api/routes/__init__.py
+    app/api/schemas/__init__.py
+    app/api/services/__init__.py
+    app/workflows/__init__.py
+    # Phase 2/3 stubs — not yet implemented
+    app/agents/voice_agent/*
+    app/agents/video_agent/*
+    app/agents/thumbnail_agent/*
+    app/agents/upload_agent/*
+    app/agents/analytics_agent/*
+    app/agents/feedback_agent/*
+    app/agents/seo_agent/*
+    app/agents/quality_agent/*
+    app/agents/moderation_agent/*
+    app/storage/*
+    app/notifications/*
+    # Celery scheduler is not unit-testable without a broker
+    app/workflows/scheduler.py
+
+[report]
+show_missing = true
+skip_covered = false
+skip_empty  = true
+precision   = 1
+fail_under  = 80
+
+exclude_lines =
+    # Don't flag abstract methods
+    @(abc\.)?abstractmethod
+    # Don't flag TYPE_CHECKING blocks
+    if TYPE_CHECKING:
+    # Don't flag overload stubs
+    @overload
+    # Don't flag pragma: no cover
+    pragma: no cover
+    # Don't flag unreachable raise / pass after exhaustive matches
+    raise NotImplementedError
+    \.\.\.
+
+[html]
+directory = htmlcov
+title     = Autonomous YouTube Studio — Coverage
+
+[xml]
+output = coverage.xml
+
+[json]
+output         = coverage.json
+pretty_print   = true
+show_contexts  = false

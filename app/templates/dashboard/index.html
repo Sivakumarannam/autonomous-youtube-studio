@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+
+  <section class="panel full">
+    <h2>Trigger New Pipeline Run</h2>
+    <form class="new-run-form"
+          hx-post="/dashboard/pipeline/run"
+          hx-target="#pipeline-runs-panel"
+          hx-swap="innerHTML">
+      <div class="field">
+        <label for="channel_id">Channel</label>
+        <select name="channel_id" id="channel_id" required>
+          {% for ch in channels %}
+            <option value="{{ ch.id }}">{{ ch.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="topic_id">Topic</label>
+        <select name="topic_id" id="topic_id" required>
+          {% for t in topics %}
+            <option value="{{ t.id }}">{{ t.title }} ({{ t.channel_id }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="script_type">Script Type</label>
+        <select name="script_type" id="script_type">
+          <option value="short">short</option>
+          <option value="long" selected>long</option>
+        </select>
+      </div>
+      <button type="submit">Run Pipeline</button>
+    </form>
+    {% if not channels or not topics %}
+      <p class="empty">Create at least one channel and topic via the API before triggering a run.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel full" id="scheduler-panel"
+            hx-get="/dashboard/partials/scheduler-status"
+            hx-trigger="load, scheduler-update from:body, every 30s"
+            hx-swap="innerHTML">
+    {% include "dashboard/_scheduler_status.html" %}
+  </section>
+
+  <section class="panel" id="pipeline-runs-panel"
+            hx-get="/dashboard/partials/pipeline-runs"
+            hx-trigger="load, pipeline-update from:body, every 15s"
+            hx-swap="innerHTML">
+    {% include "dashboard/_pipeline_runs.html" %}
+  </section>
+
+  <section class="panel" id="queue-panel"
+            hx-get="/dashboard/partials/queue"
+            hx-trigger="load, upload-update from:body, pipeline-update from:body, every 15s"
+            hx-swap="innerHTML">
+    {% include "dashboard/_queue.html" %}
+  </section>
+
+  <section class="panel" id="uploaded-videos-panel"
+            hx-get="/dashboard/partials/uploaded-videos"
+            hx-trigger="load, upload-update from:body, every 20s"
+            hx-swap="innerHTML">
+    <h2>Recently Uploaded to YouTube</h2>
+    {% include "dashboard/_uploaded_videos.html" %}
+  </section>
+
+  <section class="panel full" id="channel-automation-panel"
+            hx-get="/dashboard/partials/channel-automation"
+            hx-trigger="load, automation-update from:body, every 30s"
+            hx-swap="innerHTML">
+    {% include "dashboard/_channel_automation.html" %}
+  </section>
+
+  <section class="panel full">
+    {% include "dashboard/_notifications.html" %}
+  </section>
+
+{% endblock %}

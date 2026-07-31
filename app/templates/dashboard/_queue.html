@@ -1,0 +1,38 @@
+<h2>Upload / Publishing Queue</h2>
+{% if uploads %}
+<table>
+  <thead>
+    <tr>
+      <th>Publish Status</th>
+      <th>Upload Status</th>
+      <th>Scheduled At</th>
+      <th>Title</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for u in uploads %}
+    <tr id="upload-{{ u.id }}">
+      <td><span class="badge {{ u.publish_status.value }}">{{ u.publish_status.value }}</span></td>
+      <td><span class="badge {{ u.status.value }}">{{ u.status.value }}</span></td>
+      <td>{{ u.scheduled_at.strftime("%Y-%m-%d %H:%M:%S") if u.scheduled_at else "—" }}</td>
+      <td>{{ u.title or "—" }}</td>
+      <td>
+        {% if u.publish_status.value == "draft" %}
+        <form class="inline" hx-post="/dashboard/publishing/{{ u.id }}/approve" hx-target="#queue-panel" hx-swap="innerHTML">
+          <button type="submit">Approve</button>
+        </form>
+        {% endif %}
+        {% if u.publish_status.value in ("approved", "scheduled") %}
+        <form class="inline" hx-post="/dashboard/publishing/{{ u.id }}/reject" hx-target="#queue-panel" hx-swap="innerHTML">
+          <button type="submit" class="danger">Reject</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No uploads yet.</p>
+{% endif %}

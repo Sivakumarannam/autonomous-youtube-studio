@@ -1,0 +1,2 @@
+- [API keys & feature flags](api-keys-config.md) — which keys auto-enable features vs. need explicit flags; Telegram gap
+- [Session refresh pipeline fix](session-refresh-fix.md) — stale repo/instance bugs after _refresh_session(); lessons for future work
