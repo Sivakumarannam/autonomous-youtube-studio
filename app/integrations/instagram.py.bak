@@ -23,7 +23,7 @@ from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 
-GRAPH_BASE = "https://graph.instagram.com/v26.0"
+GRAPH_BASE = "https://graph.facebook.com/v19.0"
 
 
 def build_ig_caption(title: str, description: str, yt_url: str) -> str:
@@ -133,12 +133,6 @@ class InstagramPublisher:
         url = f"{GRAPH_BASE}/{account}/media"
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(url, data=params)
-            if r.is_error:
-                logger.error(
-                    "Instagram media creation failed — Meta API response",
-                    status_code=r.status_code,
-                    response_body=r.text[:1500],
-                )
             r.raise_for_status()
             data = r.json()
             container_id = data.get("id")
@@ -153,12 +147,6 @@ class InstagramPublisher:
             await asyncio.sleep(5)
             async with httpx.AsyncClient(timeout=10) as client:
                 r = await client.get(url, params=params)
-                if r.is_error:
-                    logger.error(
-                        "Instagram container status check failed — Meta API response",
-                        status_code=r.status_code,
-                        response_body=r.text[:1500],
-                    )
                 r.raise_for_status()
                 status = r.json().get("status_code")
             if status == "FINISHED":
@@ -172,12 +160,6 @@ class InstagramPublisher:
         params = {"creation_id": container_id, "access_token": settings.meta_access_token}
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(url, data=params)
-            if r.is_error:
-                logger.error(
-                    "Instagram publish failed — Meta API response",
-                    status_code=r.status_code,
-                    response_body=r.text[:1500],
-                )
             r.raise_for_status()
             return r.json().get("id", "")
 
