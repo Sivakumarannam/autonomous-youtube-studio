@@ -85,18 +85,17 @@ class InstagramCrossPostScheduler:
 
         # Instagram Graph API requires a *direct* publicly accessible MP4 URL —
         # YouTube watch URLs (youtu.be/…) are web pages, not raw video files, and
-        # Meta's servers will reject them.  Serve the local MP4 via our /storage
-        # static mount instead, using the Replit public dev domain.
+        # Meta's servers will reject them. Serve the local MP4 via our /storage
+        # static mount instead, using this server's real public HTTPS address.
         video_file_url: str = yt_url  # fallback if we can't build a direct link
-        dev_domain = os.environ.get("REPLIT_DEV_DOMAIN", "")
-        if dev_domain:
+        if settings.public_base_url:
             result = await session.execute(
                 select(Video).where(Video.id == upload.video_id)
             )
             video = result.scalar_one_or_none()
             if video and video.video_path:
                 filename = os.path.basename(video.video_path)
-                video_file_url = f"https://{dev_domain}/storage/videos/{filename}"
+                video_file_url = f"{settings.public_base_url.rstrip('/')}/storage/videos/{filename}"
                 logger.info(
                     "Instagram: using direct video URL",
                     url=video_file_url,

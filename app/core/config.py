@@ -322,6 +322,13 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("instagram_app_secret", "INSTAGRAM_APP_SECRET"),
     )
+    # Public HTTPS base URL for this server (e.g. "https://mystudioapp.duckdns.org").
+    # Required for Instagram cross-posting: Meta's Graph API needs a direct,
+    # publicly reachable HTTPS URL to the raw MP4 file (a YouTube watch link
+    # is rejected — see app/scheduler/instagram_scheduler.py). Leave empty to
+    # disable direct-URL construction (Instagram posting will then fail, same
+    # as if this were never configured).
+    public_base_url: str = ""
 
     # Reddit
     reddit_client_id: str = ""
