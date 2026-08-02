@@ -373,19 +373,15 @@ class VideoAgentService:
 
         video = await video_repository.mark_generating(video)
 
-        # Resolve audio first so _resolve_scenes can run Whisper on the MP3
-        # and replace word-count duration estimates with real timestamps.
-        audio_path = await self._resolve_audio_path(script.id)
+        # Resolve voice-only audio path. This is the clean speech file before
+        # any background music is mixed in. Whisper MUST run on this file —
+        # running it on the music-mixed track shifts word timestamps because
+        # Whisper's VAD and alignment are thrown off by the music signal.
+        voice_only_audio_path = await self._resolve_audio_path(script.id)
 
-       # Resolve audio first so _resolve_scenes can run Whisper on the MP3
-        # and replace word-count duration estimates with real timestamps.
-        audio_path = await self._resolve_audio_path(script.id)
-        # Keep the CLEAN voice-only path before music mixing overwrites
-        # audio_path — SadTalker's lip-sync should be driven by speech
-        # alone, not speech blended with background music.
-        voice_only_audio_path = audio_path
-
-        # Mix background music into voice audio when configured
+        # Mix background music into a separate copy for the final video audio.
+        # The voice-only path is preserved for Whisper alignment and SadTalker.
+        audio_path = voice_only_audio_path
         if audio_path and settings.background_music_enabled:
             audio_path = await self._mix_background_music(
                 audio_path=audio_path,
@@ -405,7 +401,12 @@ class VideoAgentService:
             gender=script.voice_gender or "female",
         )
 
-        scenes = await self._resolve_scenes(script.id, output, script, audio_path=audio_path)
+        # Whisper alignment uses voice_only_audio_path so music does not
+        # disturb the timestamp extraction. The final video uses audio_path
+        # (which may be the music-mixed version).
+        scenes = await self._resolve_scenes(
+            script.id, output, script, audio_path=voice_only_audio_path
+        )
 
         # Generate one background image per scene concurrently (max 3 in-flight).
         # Returns an empty mapping on any failure so the renderer falls back to
@@ -611,30 +612,58 @@ class VideoAgentService:
 
                             # Build karaoke word-timestamps from the ACTUAL clean
                             # script text (card["narration"]), not from Whisper's
-                            # raw transcription. Whisper is a speech-to-text model
-                            # and can mishear words (e.g. "violinist" -> "violence"),
-                            # which previously ended up burned directly into the
-                            # video since the karaoke renderer draws whatever is in
-                            # word_timestamps verbatim. Whisper's per-sentence
-                            # start/end timing is still trustworthy and used here —
-                            # only the WORD TEXT is replaced with the clean,
-                            # correct original words, evenly distributed across
-                            # the verified real duration.
+                            # raw transcription. Whisper can mishear words (e.g.
+                            # "violinist" → "violence"), so we replace the TEXT
+                            # with correct clean words.
+                            #
+                            # TIMING: We now use Whisper's actual per-word
+                            # boundaries as keyframes rather than linear
+                            # interpolation. Whisper knows where pauses, fast
+                            # syllables, and emphasis occur — mapping clean words
+                            # proportionally across those keyframes gives far
+                            # more accurate karaoke highlight timing than
+                            # assuming every word takes equal time.
                             clean_words = card["narration"].split()
                             if clean_words:
-                                n = len(clean_words)
-                                card["word_timestamps"] = [
-                                    {
-                                        "word": w,
-                                        "start": start_sec + (i / n) * real_dur,
-                                        "end": start_sec + ((i + 1) / n) * real_dur,
-                                    }
-                                    for i, w in enumerate(clean_words)
-                                ]
+                                n_clean = len(clean_words)
+                                if words:
+                                    # Map each clean word to its proportional
+                                    # position in the Whisper word-boundary list.
+                                    # This preserves Whisper's non-linear timing
+                                    # (pauses, fast speech, emphasis) while
+                                    # showing the correct clean text.
+                                    n_w = len(words)
+                                    wt: list[dict] = []
+                                    for ci, cw in enumerate(clean_words):
+                                        wi_s = min(
+                                            int(ci * n_w / n_clean), n_w - 1
+                                        )
+                                        wi_e = min(
+                                            int((ci + 1) * n_w / n_clean),
+                                            n_w - 1,
+                                        )
+                                        t_s = words[wi_s]["start"]
+                                        t_e = words[wi_e]["end"]
+                                        wt.append(
+                                            {"word": cw, "start": t_s, "end": t_e}
+                                        )
+                                    card["word_timestamps"] = wt
+                                else:
+                                    # No Whisper words for this sentence —
+                                    # fall back to linear interpolation.
+                                    n = n_clean
+                                    card["word_timestamps"] = [
+                                        {
+                                            "word": w,
+                                            "start": start_sec + (i / n) * real_dur,
+                                            "end": start_sec
+                                            + ((i + 1) / n) * real_dur,
+                                        }
+                                        for i, w in enumerate(clean_words)
+                                    ]
                             else:
-                                # No clean narration available for this card —
-                                # fall back to Whisper's words rather than
-                                # showing nothing.
+                                # No clean narration — fall back to Whisper's
+                                # words so the karaoke bar is never empty.
                                 card["word_timestamps"] = words
                             logger.info(
                                 "Whisper timestamp applied.",
