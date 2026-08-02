@@ -85,6 +85,15 @@ class Upload(Base):
         DateTime(timezone=True), nullable=True
     )
     instagram_media_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Retry cap — incremented on each failed/no-media_id attempt; when it
+    # reaches INSTAGRAM_MAX_RETRIES (3) the row is marked permanently failed
+    # and excluded from future scheduler ticks to prevent infinite loops.
+    instagram_retry_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    instagram_failed_permanently: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     # ───────────────────────────────────────────────────────────────────────
 
     created_at: Mapped[datetime] = mapped_column(

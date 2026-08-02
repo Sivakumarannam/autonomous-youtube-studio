@@ -107,6 +107,14 @@ class DailyAutomationScheduler:
     async def _tick(self) -> None:
         session_factory = _get_session_factory()
 
+        # Watchdog: reset pipeline runs stuck in RUNNING for > 2 hours.
+        # These cannot be genuinely in-flight (healthy runs complete in < 30 min)
+        # and permanently block automation for their channel via
+        # has_running_for_channel(). The startup reconciler handles runs that
+        # were already stuck when the process started; this watchdog catches
+        # runs that get stuck mid-session (e.g. DB failure in the recovery path).
+        await self._reset_stuck_pipeline_runs(session_factory)
+
         async with session_factory() as session:
             automation_repo = ChannelAutomationRepository(session)
             running = await automation_repo.get_running()
@@ -116,6 +124,71 @@ class DailyAutomationScheduler:
         for automation in running:
             channel_id = automation.channel_id
             asyncio.create_task(self._process_channel(channel_id))
+
+    async def _reset_stuck_pipeline_runs(self, session_factory) -> None:
+        """Find PipelineRuns stuck in RUNNING for > 2 hours and force them to FAILED.
+
+        A healthy pipeline run completes in well under 30 minutes. Anything
+        still RUNNING after 2 hours is a zombie — most likely left behind when
+        the inner recovery path in _run_pipeline_in_background() also failed.
+        Resetting it here unblocks the channel for the next automation tick.
+        """
+        from sqlalchemy import select as _select, and_ as _and_
+
+        STUCK_THRESHOLD_HOURS = 2
+        try:
+            async with session_factory() as session:
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=STUCK_THRESHOLD_HOURS)
+                result = await session.execute(
+                    _select(PipelineRun).where(
+                        _and_(
+                            PipelineRun.status == PipelineStatus.RUNNING,
+                            PipelineRun.updated_at < cutoff,
+                        )
+                    )
+                )
+                stuck = result.scalars().all()
+                if not stuck:
+                    return
+
+                for run in stuck:
+                    run.status = PipelineStatus.FAILED
+                    run.failed_stage = run.current_stage or "unknown"
+                    run.current_stage = None
+                    run.error_message = (
+                        f"Watchdog: forcibly terminated after being stuck in "
+                        f"status=running for >{STUCK_THRESHOLD_HOURS}h "
+                        f"(updated_at={run.updated_at.isoformat() if run.updated_at else 'unknown'})."
+                    )
+
+                await session.commit()
+                logger.warning(
+                    "Automation watchdog: reset stuck RUNNING pipeline run(s).",
+                    count=len(stuck),
+                    pipeline_run_ids=[str(r.id) for r in stuck],
+                    stuck_threshold_hours=STUCK_THRESHOLD_HOURS,
+                )
+                try:
+                    from app.notifications.service import notify as _notify
+                    for run in stuck:
+                        await _notify(
+                            title="⚠️ Stuck Pipeline Run Reset by Watchdog",
+                            body=(
+                                f"Pipeline run {str(run.id)[:8]}… was stuck in "
+                                f"RUNNING for >{STUCK_THRESHOLD_HOURS}h and has "
+                                f"been force-failed so the channel can continue."
+                            ),
+                            level="warning",
+                            extra={"🆔 Run ID": str(run.id), "📌 Stage": run.failed_stage or "unknown"},
+                        )
+                except Exception:
+                    pass  # notifications are best-effort
+
+        except Exception as exc:
+            logger.error(
+                "Automation watchdog: failed to reset stuck pipeline runs.",
+                error=str(exc),
+            )
 
     async def _process_channel(self, channel_id: UUID) -> None:
         """Process a single channel's daily tick under the concurrency semaphore.

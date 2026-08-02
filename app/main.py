@@ -41,6 +41,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("Database ready")
 
+    # ── Security: warn loudly if JWT_SECRET_KEY is still the dev default ──
+    # The default "jwt-dev-secret" is public knowledge (it's in the source
+    # code). Any deployment that reaches this with the default intact has a
+    # forged-token vulnerability. Crash in production; warn in development.
+    _JWT_DEV_DEFAULT = "jwt-dev-secret"
+    if settings.jwt_secret_key == _JWT_DEV_DEFAULT:
+        _msg = (
+            "SECURITY: JWT_SECRET_KEY is the hardcoded dev default "
+            f'("{_JWT_DEV_DEFAULT}"). Set a strong random JWT_SECRET_KEY '
+            "environment variable / secret immediately — JWTs can be forged."
+        )
+        if settings.app_env == "production":
+            raise RuntimeError(_msg)
+        else:
+            logger.warning(_msg)
+
     # Reconcile pipeline runs orphaned by a container restart/redeploy.
     # Any row still marked RUNNING at this point cannot be genuinely
     # in-flight — this is a fresh process — so it was abandoned when the

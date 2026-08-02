@@ -4,13 +4,20 @@ Runs every 10 minutes. Picks up Upload rows where:
   - status = PUBLISHED
   - instagram_posted = False
   - instagram_scheduled_at <= now()
+  - instagram_failed_permanently = False  (retry cap not yet reached)
 
 Then posts the Reel via the Meta Graph API and marks the row posted.
+
+Retry cap: each failed attempt increments instagram_retry_count. After
+INSTAGRAM_MAX_RETRIES (3) failures the row is marked instagram_failed_permanently
+and excluded from future ticks — preventing the infinite-retry loop (audit gap A).
 """
 from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+
+INSTAGRAM_MAX_RETRIES = 3
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -125,23 +132,67 @@ class InstagramCrossPostScheduler:
                     )
                 except Exception:
                     pass
-            else:
-                logger.warning(
-                    "Instagram post returned no media_id — will retry next tick.",
-                    upload_id=str(upload.id),
-                )
+                return  # success — exit early
+
+            # No media_id returned — count as a failed attempt.
+            failed_reason = "post_to_instagram returned no media_id"
+
         except Exception as exc:
+            failed_reason = str(exc)
             logger.error(
                 "Instagram post failed",
                 upload_id=str(upload.id),
-                error=str(exc),
+                error=failed_reason,
+            )
+
+        # ── Retry cap logic ───────────────────────────────────────────────
+        # Increment the attempt counter. If we've hit the cap, mark the row
+        # permanently failed so it is excluded from all future scheduler ticks.
+        new_retry_count = (upload.instagram_retry_count or 0) + 1
+        repo = UploadRepository(session)
+
+        if new_retry_count >= INSTAGRAM_MAX_RETRIES:
+            await repo.mark_instagram_failed_permanently(upload)
+            await repo.update(upload, instagram_retry_count=new_retry_count)
+            await session.commit()
+            logger.error(
+                "Instagram post permanently failed — retry cap reached, "
+                "will not retry again.",
+                upload_id=str(upload.id),
+                attempts=new_retry_count,
+                reason=failed_reason,
             )
             try:
                 await notify(
-                    title="❌ Instagram Post Failed",
-                    body=f'Could not post "{upload.title or "Untitled"}" to Instagram.',
+                    title="❌ Instagram Post Permanently Failed",
+                    body=(
+                        f'"{upload.title or "Untitled"}" failed {new_retry_count}× '
+                        f"and will not be retried. Manual action required."
+                    ),
                     level="error",
-                    extra={"💥 Error": str(exc)},
+                    extra={
+                        "💥 Last error": failed_reason,
+                        "🔁 Attempts": str(new_retry_count),
+                    },
+                )
+            except Exception:
+                pass
+        else:
+            await repo.update(upload, instagram_retry_count=new_retry_count)
+            await session.commit()
+            logger.warning(
+                "Instagram post failed — will retry next tick.",
+                upload_id=str(upload.id),
+                attempt=new_retry_count,
+                remaining=INSTAGRAM_MAX_RETRIES - new_retry_count,
+                reason=failed_reason,
+            )
+            try:
+                await notify(
+                    title="⚠️ Instagram Post Failed (will retry)",
+                    body=f'"{upload.title or "Untitled"}" — attempt {new_retry_count}/{INSTAGRAM_MAX_RETRIES}.',
+                    level="warning",
+                    extra={"💥 Error": failed_reason},
                 )
             except Exception:
                 pass

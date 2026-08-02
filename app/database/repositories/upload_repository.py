@@ -130,7 +130,11 @@ class UploadRepository(BaseRepository[Upload]):
         )
 
     async def get_due_for_instagram(self) -> list[Upload]:
-        """Return published uploads whose instagram_scheduled_at has passed and not yet posted."""
+        """Return published uploads whose instagram_scheduled_at has passed and not yet posted.
+
+        Excludes rows marked instagram_failed_permanently=True so the scheduler
+        never retries an upload that has already exhausted its attempt cap.
+        """
         from sqlalchemy import and_, select
         now = datetime.now(timezone.utc)
         result = await self.session.execute(
@@ -140,10 +144,22 @@ class UploadRepository(BaseRepository[Upload]):
                     Upload.instagram_posted.is_(False),
                     Upload.instagram_scheduled_at.isnot(None),
                     Upload.instagram_scheduled_at <= now,
+                    Upload.instagram_failed_permanently.is_(False),
                 )
             )
         )
         return list(result.scalars().all())
+
+    async def mark_instagram_failed_permanently(self, upload: Upload) -> Upload:
+        """Mark an upload as permanently failed for Instagram cross-posting.
+
+        Called when instagram_retry_count reaches the cap (3 attempts).
+        The row is then excluded from get_due_for_instagram() forever.
+        """
+        return await self.update(
+            upload,
+            instagram_failed_permanently=True,
+        )
 
     async def mark_instagram_posted(
         self, upload: Upload, media_id: str
