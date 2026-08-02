@@ -5,7 +5,7 @@ import re
 from typing import TypedDict
 
 from app.agents.seo_agent.models import SEOAgentOutput
-from app.agents.seo_agent.prompts import SEO_SYSTEM_PROMPT, build_seo_prompt
+from app.agents.seo_agent.prompts import build_seo_prompt, build_seo_system_prompt
 from app.core.logging import get_logger
 from app.llm_providers.base import BaseLLMProvider
 

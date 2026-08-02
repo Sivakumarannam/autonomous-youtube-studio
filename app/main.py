@@ -134,15 +134,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.scheduler.storage_cleanup_scheduler import get_storage_cleanup_scheduler
     storage_cleanup_scheduler = get_storage_cleanup_scheduler()
 
+    # Start daily Instagram token watchdog — auto-refreshes the long-lived
+    # Instagram token before its ~60-day validity expires, and only
+    # notifies if that automatic refresh actually fails.
+    from app.scheduler.instagram_token_watchdog import get_instagram_token_watchdog
+    instagram_token_watchdog = get_instagram_token_watchdog()
+
     if settings.run_internal_schedulers:
         scheduler.start()
         automation_scheduler.start()
         ig_scheduler.start()
         storage_cleanup_scheduler.start()
+        instagram_token_watchdog.start()
 
     yield
 
     # Shutdown sequence
+    instagram_token_watchdog.shutdown()
     storage_cleanup_scheduler.shutdown()
     ig_scheduler.stop()
     automation_scheduler.shutdown()

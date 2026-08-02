@@ -139,6 +139,26 @@ class VoiceAgent:
 
         file_size = file_path.stat().st_size if file_path.exists() else 0
 
+        # Measure the REAL duration from the actual generated file rather
+        # than trusting the pre-generation word-count/wpm estimate above.
+        # That estimate can be significantly wrong — the WPM constants were
+        # calibrated on a different environment (see class docstring) — and
+        # everything downstream (Whisper alignment, scene pacing, the final
+        # video/voice trim in the renderer) is more accurate when driven by
+        # the real file length. Falls back to the estimate only if the file
+        # is missing or can't be read (e.g. mock/test audio).
+        measured_duration = self._measure_audio_duration(file_path)
+        if measured_duration is not None:
+            if abs(measured_duration - duration_seconds) > 2.0:
+                logger.warning(
+                    "Voice duration estimate was significantly off — using "
+                    "measured value instead.",
+                    estimated_seconds=duration_seconds,
+                    measured_seconds=measured_duration,
+                    script_id=script_id,
+                )
+            duration_seconds = measured_duration
+
         return VoiceAgentOutput(
             audio_file_path=str(file_path),
             duration_seconds=duration_seconds,
@@ -148,6 +168,25 @@ class VoiceAgent:
             file_size_bytes=file_size,
             success=True,
         )
+
+    @staticmethod
+    def _measure_audio_duration(file_path: Path) -> Optional[float]:
+        """Real duration of the generated audio file, in seconds. Returns
+        None (never raises) if the file is missing or can't be decoded —
+        callers fall back to the word-count estimate in that case."""
+        if not file_path.exists():
+            return None
+        try:
+            from pydub import AudioSegment  # type: ignore
+            audio = AudioSegment.from_file(str(file_path))
+            return round(len(audio) / 1000, 1)
+        except Exception as exc:
+            logger.warning(
+                "Could not measure real audio duration — falling back to estimate",
+                error=str(exc),
+                file_path=str(file_path),
+            )
+            return None
 
     async def _clean_script(self, content: str, language: str) -> str:
         """Use the LLM to clean the script for TTS, then strip pause markers.

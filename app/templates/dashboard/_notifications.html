@@ -57,8 +57,26 @@
     </div>
   </div>
   <p style="margin:0.5rem 0 0;font-size:0.72rem;color:var(--muted)">
-    ⚠️ Instagram access tokens expire every ~60 days — refresh <code>INSTAGRAM_ACCESS_TOKEN</code> in Secrets when needed.
+    {% if ig_token_days_remaining is not none %}
+      {% if ig_token_days_remaining <= 2 %}
+        <span style="color:#e05252">⚠️ Instagram token expires in {{ ig_token_days_remaining }} day(s) — auto-refresh will attempt to renew it, watch for a notification if it fails.</span>
+      {% else %}
+        🔑 Instagram token valid for {{ ig_token_days_remaining }} more day(s) (auto-refreshes automatically before expiry).
+      {% endif %}
+    {% else %}
+      ⚠️ Instagram token expiry unknown — set <code>INSTAGRAM_TOKEN_ISSUED_AT</code> in Secrets (YYYY-MM-DD) to track it.
+    {% endif %}
   </p>
+  <button
+    hx-post="/dashboard/instagram/refresh-token"
+    hx-target="#ig-refresh-result-wrap"
+    hx-swap="innerHTML"
+    hx-indicator="#ig-refresh-spinner"
+    style="margin-top:0.5rem;padding:0.35rem 0.8rem;font-size:0.75rem;background:transparent;
+           border:1px solid var(--accent);color:var(--accent);border-radius:6px;cursor:pointer"
+    onclick="this.textContent='Refreshing…';this.disabled=true;setTimeout(()=>{this.textContent='🔄 Refresh Token Now';this.disabled=false},4000)"
+  >🔄 Refresh Token Now</button>
+  <div id="ig-refresh-result-wrap"></div>
 </div>
 {% endif %}
 

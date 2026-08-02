@@ -17,6 +17,7 @@ from app.api.services.publishing_service import PublishingService
 from app.core.config import settings
 from app.database.connection import get_db
 from app.database.models.channel_automation import AutomationStatus, ChannelAutomation
+from app.database.models.upload import UploadStatus
 from app.database.repositories.channel_automation_repository import (
     ChannelAutomationRepository,
 )
@@ -51,7 +52,7 @@ async def dashboard_index(
         u for u in uploads
         if getattr(u, "instagram_scheduled_at", None)
         and not getattr(u, "instagram_posted", True)
-        and str(getattr(u, "status", "")) == "published"
+        and getattr(u, "status", None) == UploadStatus.PUBLISHED
     ]
     ig_posted = [
         u for u in uploads
@@ -61,6 +62,8 @@ async def dashboard_index(
         (u.instagram_scheduled_at for u in ig_pending if u.instagram_scheduled_at),
         default=None,
     )
+
+    from app.integrations.instagram_token_store import days_remaining as ig_token_days_remaining
 
     return templates.TemplateResponse(
         request,
@@ -82,6 +85,7 @@ async def dashboard_index(
             "ig_pending_count": len(ig_pending),
             "ig_posted_count": len(ig_posted),
             "ig_next_scheduled": ig_next,
+            "ig_token_days_remaining": ig_token_days_remaining(),
             # Recent published uploads that need manual YouTube Studio actions
             "pending_manual_actions": [
                 u.youtube_video_id
@@ -577,3 +581,41 @@ async def test_notifications(request: Request):
             {"message": f"Notification failed: {exc}", "error": True},
             status_code=200,
         )
+
+
+# -------------------------
+# INSTAGRAM TOKEN — manual refresh
+# -------------------------
+@router.post("/instagram/refresh-token")
+async def refresh_instagram_token(request: Request):
+    """Attempt an immediate Instagram token refresh (the same mechanism
+    the daily watchdog uses). Always returns 200 with a rendered panel —
+    success or the manual regeneration steps — for the dashboard button
+    to swap in directly; never a bare error page."""
+    from app.scheduler.instagram_token_watchdog import get_instagram_token_watchdog
+
+    watchdog = get_instagram_token_watchdog()
+    success, message, expires_in = await watchdog.manual_refresh()
+
+    if success:
+        return templates.TemplateResponse(
+            request,
+            "dashboard/_instagram_refresh_result.html",
+            {
+                "success": True,
+                "expires_in_days": (expires_in // 86400) if expires_in else 60,
+                "auto_hide_seconds": 20,
+            },
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "dashboard/_instagram_refresh_result.html",
+        {
+            "success": False,
+            "instructions": watchdog.manual_refresh_instructions(message),
+            # 10 minutes — enough time to actually click through Meta's
+            # dashboard flow, capped per your request of 10-15 min max.
+            "auto_hide_seconds": 600,
+        },
+    ) 

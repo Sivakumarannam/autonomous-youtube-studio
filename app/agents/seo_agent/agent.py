@@ -4,7 +4,7 @@ import time
 from typing import Optional
 
 from app.agents.seo_agent.models import SEOAgentInput, SEOAgentOutput
-from app.agents.seo_agent.prompts import SEO_SYSTEM_PROMPT, build_seo_prompt
+from app.agents.seo_agent.prompts import build_seo_prompt, build_seo_system_prompt
 from app.core.exceptions import AgentError
 from app.core.logging import get_logger
 from app.database.models.script import Script
@@ -108,7 +108,7 @@ class SEOAgent:
         )
         response = await self._llm.generate_text(
             prompt=prompt,
-            system=SEO_SYSTEM_PROMPT,
+            system=build_seo_system_prompt(),
             temperature=0.4,
             max_tokens=2048,
         )

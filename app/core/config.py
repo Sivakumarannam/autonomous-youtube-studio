@@ -317,6 +317,8 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("meta_access_token", "instagram_access_token"),
     )
+    instagram_token_issued_at: str = ""
+    instagram_token_warn_days: int = 2
     # Used for Instagram webhook signature verification (not required for basic posting)
     instagram_app_secret: str = Field(
         default="",

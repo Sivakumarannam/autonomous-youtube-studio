@@ -1,0 +1,31 @@
+<div id="ig-refresh-result"
+     style="margin-top:0.6rem;padding:0.75rem 1rem;border-radius:8px;font-size:0.82rem;
+            white-space:pre-wrap;line-height:1.5;
+            background:{% if success %}#0a2a15{% else %}#2a1a0a{% endif %};
+            border:1px solid {% if success %}#1a6b3a{% else %}#8b5a1a{% endif %};
+            color:{% if success %}#4ade80{% else %}#f5c04c{% endif %}">
+  {% if success %}
+✅ Token refreshed successfully — valid for another ~{{ expires_in_days }} days. No further action needed.
+  {% else %}
+⚠️ Automatic refresh didn't succeed. Manual steps (this panel will auto-hide in {{ auto_hide_seconds // 60 }} minutes):
+
+{{ instructions }}
+  {% endif %}
+  <div style="margin-top:0.5rem">
+    <button onclick="document.getElementById('ig-refresh-result').remove()"
+            style="font-size:0.75rem;padding:0.2rem 0.6rem;background:transparent;
+                   border:1px solid currentColor;border-radius:4px;color:inherit;cursor:pointer">
+      Dismiss now
+    </button>
+  </div>
+</div>
+<script>
+  (function() {
+    var el = document.getElementById('ig-refresh-result');
+    if (el) {
+      setTimeout(function() {
+        if (el && el.parentNode) { el.remove(); }
+      }, {{ auto_hide_seconds * 1000 }});
+    }
+  })();
+</script>

@@ -20,6 +20,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
+from app.integrations.instagram_token_store import get_current_token
 
 logger = structlog.get_logger(__name__)
 
@@ -86,11 +87,12 @@ class InstagramPublisher:
 
     def __init__(self) -> None:
         self._account_id = settings.instagram_business_account_id
-        self._token = settings.meta_access_token
+        self._token, _ = get_current_token()
 
     def _enabled(self) -> bool:
-        # Re-read from settings each call so auto-enable in config is picked up
-        token = settings.meta_access_token
+        # Re-read each call so auto-enable in config, and any freshly
+        # auto-refreshed token, are picked up without a restart.
+        token, _ = get_current_token()
         account = settings.instagram_business_account_id
         return bool(settings.instagram_enabled and account and token)
 
@@ -118,7 +120,7 @@ class InstagramPublisher:
             return None
 
     async def _create_container(self, video_url: str, caption: str, cover_url: Optional[str]) -> Optional[str]:
-        token = settings.meta_access_token
+        token, _ = get_current_token()
         account = settings.instagram_business_account_id
         params: dict = {
             "media_type": "REELS",
@@ -148,7 +150,8 @@ class InstagramPublisher:
     async def _wait_for_ready(self, container_id: str, max_wait: int = 120) -> None:
         """Poll until container status is FINISHED."""
         url = f"{GRAPH_BASE}/{container_id}"
-        params = {"fields": "status_code", "access_token": settings.meta_access_token}
+        token, _ = get_current_token()
+        params = {"fields": "status_code", "access_token": token}
         for _ in range(max_wait // 5):
             await asyncio.sleep(5)
             async with httpx.AsyncClient(timeout=10) as client:
@@ -169,7 +172,8 @@ class InstagramPublisher:
 
     async def _publish(self, container_id: str) -> str:
         url = f"{GRAPH_BASE}/{settings.instagram_business_account_id}/media_publish"
-        params = {"creation_id": container_id, "access_token": settings.meta_access_token}
+        token, _ = get_current_token()
+        params = {"creation_id": container_id, "access_token": token}
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(url, data=params)
             if r.is_error:
