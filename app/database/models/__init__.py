@@ -13,6 +13,7 @@ from app.database.models.storyboard import Storyboard
 from app.database.models.voice import Voice
 from app.database.models.pipeline_run import PipelineRun
 from app.database.models.channel_automation import ChannelAutomation
+from app.database.models.chat import ChatSession, ChatMessage, ChatUnresolved, KnowledgeDoc
 
 __all__ = [
     "Channel",
@@ -29,4 +30,9 @@ __all__ = [
     "Storyboard",
     "Voice",
     "PipelineRun",
-    "ChannelAutomation",]
+    "ChannelAutomation",
+    "ChatSession",
+    "ChatMessage",
+    "ChatUnresolved",
+    "KnowledgeDoc",
+]

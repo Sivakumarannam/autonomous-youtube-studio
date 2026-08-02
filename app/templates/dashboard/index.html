@@ -77,4 +77,18 @@
     {% include "dashboard/_notifications.html" %}
   </section>
 
+  <!-- Studio Assistant Chatbot -->
+  <section class="panel full" id="chat-panel">
+    {% include "dashboard/_chat.html" %}
+  </section>
+
+  <!-- Knowledge Base (hidden by default, toggled by chat header button) -->
+  <section class="panel full" id="kb-panel"
+           style="display:none;"
+           hx-get="/dashboard/partials/knowledge-base"
+           hx-trigger="revealed, kb-refresh from:body"
+           hx-swap="innerHTML">
+    <p class="empty">Loading knowledge base…</p>
+  </section>
+
 {% endblock %}

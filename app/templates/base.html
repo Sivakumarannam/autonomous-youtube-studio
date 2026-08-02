@@ -296,6 +296,73 @@
     .stage-connector.done  { background: #22c55e; }
     .stage-connector.active { background: linear-gradient(90deg, #22c55e 50%, var(--border) 50%); }
 
+    /* ─────────────────────────────────────────────────────────────
+       Studio Assistant Chatbot
+       ───────────────────────────────────────────────────────────── */
+    .chat-msg {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      animation: fadeIn 0.25s ease;
+    }
+    .chat-msg.user { align-items: flex-end; }
+    .chat-msg.assistant { align-items: flex-start; }
+    .chat-bubble {
+      max-width: 80%;
+      padding: 0.6rem 0.85rem;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .chat-msg.user .chat-bubble {
+      background: rgba(91,140,255,0.18);
+      color: var(--text);
+      border-bottom-right-radius: 3px;
+    }
+    .chat-msg.assistant .chat-bubble {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-bottom-left-radius: 3px;
+    }
+    .chat-sources {
+      font-size: 0.7rem;
+      color: var(--muted);
+      padding-left: 0.25rem;
+    }
+    .chat-flag-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.7rem;
+      padding: 0.15rem 0.45rem;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.15s;
+    }
+    .chat-flag-btn:hover { border-color: var(--amber); color: var(--amber); }
+    .chat-chip {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.75rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+    .chat-chip:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(91,140,255,0.08);
+    }
+    #chat-messages::-webkit-scrollbar { width: 4px; }
+    #chat-messages::-webkit-scrollbar-track { background: transparent; }
+    #chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
     /* Run card layout */
     .run-card {
       border: 1px solid var(--border);

@@ -1,0 +1,104 @@
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.9rem;">
+  <h2 style="margin:0;">Knowledge Base</h2>
+  <button type="button" onclick="showUploadForm()" style="font-size:0.78rem;">+ Upload Document</button>
+</div>
+
+<!-- Upload form (hidden by default) -->
+<div id="kb-upload-form" style="display:none;margin-bottom:1rem;padding:0.9rem;border:1px solid var(--border);border-radius:8px;background:#0f1117;">
+  <div class="field" style="margin-bottom:0.6rem;">
+    <label>Document title</label>
+    <input type="text" id="kb-doc-title" placeholder="e.g. Troubleshooting Guide" style="width:100%;">
+  </div>
+  <div class="field" style="margin-bottom:0.6rem;">
+    <label>Content (paste text or Markdown)</label>
+    <textarea id="kb-doc-text" rows="6" placeholder="Paste document content here…"
+              style="width:100%;background:#0f1117;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:0.5rem;font-size:0.82rem;font-family:inherit;resize:vertical;"></textarea>
+  </div>
+  <div style="display:flex;gap:0.5rem;align-items:center;">
+    <button type="button" onclick="submitKbDoc()" style="font-size:0.78rem;">Ingest Document</button>
+    <button type="button" onclick="hideUploadForm()" style="font-size:0.78rem;background:var(--border);color:var(--text);">Cancel</button>
+    <span id="kb-upload-status" style="font-size:0.78rem;color:var(--muted);"></span>
+  </div>
+</div>
+
+<!-- Document list -->
+{% if docs %}
+<table>
+  <thead>
+    <tr>
+      <th>Title</th>
+      <th>Chunks</th>
+      <th>Uploaded</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for doc in docs %}
+    <tr id="kb-row-{{ doc.id }}">
+      <td>{{ doc.title }}</td>
+      <td>{{ doc.chunk_count }}</td>
+      <td style="color:var(--muted);font-size:0.8rem;">{{ doc.ingested_at.strftime('%Y-%m-%d') if doc.ingested_at else '—' }}</td>
+      <td>
+        <button class="danger" style="font-size:0.72rem;padding:0.2rem 0.55rem;"
+                onclick="deleteKbDoc('{{ doc.id }}', this)">Delete</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No documents in the knowledge base yet. Upload one above to get started.</p>
+{% endif %}
+
+<script>
+function showUploadForm() {
+  document.getElementById('kb-upload-form').style.display = '';
+  document.getElementById('kb-doc-title').focus();
+}
+function hideUploadForm() {
+  document.getElementById('kb-upload-form').style.display = 'none';
+  document.getElementById('kb-doc-title').value = '';
+  document.getElementById('kb-doc-text').value = '';
+  document.getElementById('kb-upload-status').textContent = '';
+}
+async function submitKbDoc() {
+  const title = document.getElementById('kb-doc-title').value.trim();
+  const text  = document.getElementById('kb-doc-text').value.trim();
+  const status = document.getElementById('kb-upload-status');
+  if (!title || !text) { status.textContent = 'Title and content are required.'; status.style.color = 'var(--red)'; return; }
+  status.textContent = 'Ingesting…'; status.style.color = 'var(--muted)';
+  try {
+    const resp = await fetch('/api/v1/chat/kb/docs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'HX-Request': 'true' },
+      body: JSON.stringify({ title, text }),
+    });
+    if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || resp.status); }
+    const data = await resp.json();
+    status.textContent = `✓ Ingested (${data.chunk_count} chunks)`; status.style.color = 'var(--green)';
+    // Refresh KB panel via HTMX
+    setTimeout(() => {
+      htmx.trigger(document.getElementById('kb-panel'), 'kb-refresh');
+      hideUploadForm();
+    }, 1200);
+  } catch(e) {
+    status.textContent = `Error: ${e.message}`; status.style.color = 'var(--red)';
+  }
+}
+async function deleteKbDoc(docId, btn) {
+  if (!confirm('Delete this document from the knowledge base?')) return;
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/api/v1/chat/kb/docs/${docId}`, {
+      method: 'DELETE',
+      headers: { 'HX-Request': 'true' },
+    });
+    if (!resp.ok) throw new Error(resp.status);
+    const row = document.getElementById(`kb-row-${docId}`);
+    if (row) row.remove();
+  } catch(e) {
+    btn.disabled = false;
+    alert(`Delete failed: ${e.message}`);
+  }
+}
+</script>

@@ -130,6 +130,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         provider=provider.provider_name,
     )
 
+    # ── Auto-seed chatbot knowledge base ───────────────────────────────────
+    # Ingest the project overview doc on first boot (idempotent — skipped if
+    # any KnowledgeDocs already exist in the DB).
+    try:
+        from pathlib import Path as _KbPath
+        from app.database.connection import get_session_factory as _chat_sf
+        from app.chatbot.knowledge_base import ingest_document as _ingest_doc, has_any_knowledge_docs as _has_kb
+        _chat_session_factory = _chat_sf()
+        async with _chat_session_factory() as _chat_db:
+            if not await _has_kb(_chat_db):
+                _overview = _KbPath("docs/project_overview.md")
+                if _overview.exists():
+                    await _ingest_doc(
+                        session=_chat_db,
+                        title="Project Overview & Pipeline",
+                        text=_overview.read_text(encoding="utf-8"),
+                        source_type="auto_seed",
+                    )
+                    logger.info("Chatbot KB seeded with project_overview.md")
+    except Exception as _kb_exc:
+        logger.warning("Chatbot KB auto-seed failed (non-fatal)", error=str(_kb_exc))
+
     # Start publish scheduler
     from app.scheduler.scheduler import get_scheduler
     scheduler = get_scheduler()
@@ -567,6 +589,15 @@ def create_app() -> FastAPI:
     app.include_router(websocket_router, prefix="/ws", tags=["websocket"])
     # Dashboard has its own per-request auth guard inside the router
     app.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
+
+    # ── Chatbot routes ──────────────────────────────────────────────────────
+    from app.api.routes.chat import ws_router as chat_ws_router
+    from app.api.routes.chat import api_router as chat_api_router
+    from app.api.routes.chat import dash_router as chat_dash_router
+
+    app.include_router(chat_ws_router, prefix="/ws", tags=["chat"])
+    app.include_router(chat_api_router, prefix="/api/v1/chat", tags=["chat"])
+    app.include_router(chat_dash_router, prefix="/dashboard/partials", tags=["chat"])
 
     # ------------------------------------------------------------------
     # Monitoring (Phase 5, item 4)

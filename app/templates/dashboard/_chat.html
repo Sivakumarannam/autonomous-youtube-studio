@@ -1,0 +1,243 @@
+<h2 style="display:flex;align-items:center;justify-content:space-between;margin:0 0 0.9rem;">
+  <span>Studio Assistant</span>
+  <span style="display:flex;align-items:center;gap:0.75rem;">
+    <span id="chat-ws-status" style="font-size:0.75rem;color:var(--muted);padding:0.2rem 0.55rem;border:1px solid var(--border);border-radius:999px;">connecting…</span>
+    <button type="button" id="chat-kb-toggle" onclick="toggleKbPanel()" style="font-size:0.72rem;background:transparent;border:1px solid var(--border);color:var(--muted);padding:0.2rem 0.6rem;">Docs ↗</button>
+  </span>
+</h2>
+
+<!-- Suggested questions (shown until user sends first message) -->
+<div id="chat-suggestions" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.9rem;"></div>
+
+<!-- Message history -->
+<div id="chat-messages"
+     style="min-height:260px;max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:0.7rem;padding:0.5rem 0;margin-bottom:0.9rem;border-bottom:1px solid var(--border);">
+  <div class="chat-msg assistant">
+    <div class="chat-bubble">
+      Hello! I know everything about this studio — the pipeline, your channels, recent runs, and how every agent works. Ask me anything.
+    </div>
+  </div>
+</div>
+
+<!-- Input bar -->
+<div style="display:flex;gap:0.5rem;align-items:flex-end;">
+  <textarea id="chat-input"
+            rows="1"
+            placeholder="Ask anything about the studio…"
+            style="flex:1;resize:none;background:#0f1117;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:0.55rem 0.75rem;font-size:0.85rem;font-family:inherit;line-height:1.4;overflow-hidden;"
+            onkeydown="handleChatKey(event)"
+            oninput="autoResize(this)"></textarea>
+  <button type="button" id="chat-send-btn" onclick="sendChatMessage()" style="white-space:nowrap;padding:0.55rem 1rem;font-size:0.85rem;">Send ↵</button>
+</div>
+
+<script>
+(function () {
+  // ── State ──────────────────────────────────────────────────────────────────
+  let chatWs = null;
+  let isStreaming = false;
+  let currentBotBubble = null;
+  let currentStreamText = '';
+  let lastQuestion = '';
+
+  // ── WebSocket init ──────────────────────────────────────────────────────────
+  function connectChatWs() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    chatWs = new WebSocket(`${proto}://${location.host}/ws/chat`);
+
+    chatWs.onopen = () => setStatus('live', 'var(--green)');
+    chatWs.onclose = () => {
+      setStatus('disconnected', 'var(--red)');
+      // Reconnect after 3 s
+      setTimeout(connectChatWs, 3000);
+    };
+    chatWs.onerror = () => setStatus('error', 'var(--red)');
+    chatWs.onmessage = (evt) => handleChatMessage(evt.data);
+  }
+
+  function setStatus(text, color) {
+    const el = document.getElementById('chat-ws-status');
+    if (el) { el.textContent = text; el.style.color = color; el.style.borderColor = color; }
+  }
+
+  // ── Incoming message handler ────────────────────────────────────────────────
+  function handleChatMessage(raw) {
+    let msg;
+    try { msg = JSON.parse(raw); } catch { return; }
+
+    if (msg.type === 'history') {
+      // Render historical messages (skip the welcome bubble if history exists)
+      if (msg.messages && msg.messages.length) {
+        const box = document.getElementById('chat-messages');
+        // Clear welcome if history present
+        box.innerHTML = '';
+        msg.messages.forEach(m => appendMessage(m.role, m.content, m.sources || []));
+        scrollChat();
+      }
+      return;
+    }
+
+    if (msg.type === 'suggested') {
+      renderSuggestions(msg.questions || []);
+      return;
+    }
+
+    if (msg.type === 'token') {
+      if (!currentBotBubble) {
+        currentBotBubble = appendMessage('assistant', '', [], true);
+        currentStreamText = '';
+      }
+      currentStreamText += msg.text;
+      currentBotBubble.textContent = currentStreamText;
+      scrollChat();
+      return;
+    }
+
+    if (msg.type === 'done') {
+      isStreaming = false;
+      setInputEnabled(true);
+      if (currentBotBubble && msg.sources && msg.sources.length) {
+        appendSources(currentBotBubble, msg.sources);
+        if (!msg.low_confidence) appendFlagButton(currentBotBubble);
+      } else if (currentBotBubble) {
+        appendFlagButton(currentBotBubble);
+      }
+      currentBotBubble = null;
+      scrollChat();
+      return;
+    }
+
+    if (msg.type === 'escalated') {
+      appendMessage('assistant', `⚑ ${msg.text}`, []);
+      scrollChat();
+      return;
+    }
+
+    if (msg.type === 'error') {
+      isStreaming = false;
+      setInputEnabled(true);
+      currentBotBubble = null;
+      appendMessage('assistant', `⚠ ${msg.text}`, []);
+      scrollChat();
+    }
+  }
+
+  // ── Send message ────────────────────────────────────────────────────────────
+  window.sendChatMessage = function() {
+    if (isStreaming) return;
+    const input = document.getElementById('chat-input');
+    const text = input.value.trim();
+    if (!text || !chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+
+    lastQuestion = text;
+    input.value = '';
+    autoResize(input);
+
+    // Hide suggestions after first send
+    const sug = document.getElementById('chat-suggestions');
+    if (sug) sug.style.display = 'none';
+
+    appendMessage('user', text, []);
+    isStreaming = true;
+    setInputEnabled(false);
+    scrollChat();
+
+    chatWs.send(JSON.stringify({ type: 'question', text }));
+  };
+
+  window.handleChatKey = function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  };
+
+  // Ctrl+/ or Cmd+K focuses chat input from anywhere
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey && e.key === '/') || (e.metaKey && e.key === 'k')) {
+      e.preventDefault();
+      document.getElementById('chat-input')?.focus();
+    }
+  });
+
+  // ── DOM helpers ─────────────────────────────────────────────────────────────
+  function appendMessage(role, content, sources, returnBubble) {
+    const box = document.getElementById('chat-messages');
+    const row = document.createElement('div');
+    row.className = `chat-msg ${role}`;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble';
+    bubble.textContent = content;
+    row.appendChild(bubble);
+
+    if (sources && sources.length) appendSources(bubble, sources);
+    box.appendChild(row);
+    scrollChat();
+    return returnBubble ? bubble : row;
+  }
+
+  function appendSources(bubble, sources) {
+    const src = document.createElement('div');
+    src.className = 'chat-sources';
+    src.textContent = 'Sources: ' + sources.map(s => s.title || s.type).join(' · ');
+    bubble.parentElement.appendChild(src);
+  }
+
+  function appendFlagButton(bubble) {
+    const btn = document.createElement('button');
+    btn.textContent = '⚑ Flag';
+    btn.title = "Flag this answer for investigation";
+    btn.className = 'chat-flag-btn';
+    btn.onclick = () => {
+      if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+        chatWs.send(JSON.stringify({ type: 'flag' }));
+        btn.textContent = '⚑ Flagged';
+        btn.disabled = true;
+      }
+    };
+    bubble.parentElement.appendChild(btn);
+  }
+
+  function renderSuggestions(questions) {
+    const box = document.getElementById('chat-suggestions');
+    if (!box) return;
+    box.innerHTML = '';
+    questions.forEach(q => {
+      const chip = document.createElement('button');
+      chip.className = 'chat-chip';
+      chip.textContent = q;
+      chip.onclick = () => {
+        document.getElementById('chat-input').value = q;
+        sendChatMessage();
+      };
+      box.appendChild(chip);
+    });
+  }
+
+  function scrollChat() {
+    const box = document.getElementById('chat-messages');
+    if (box) box.scrollTop = box.scrollHeight;
+  }
+
+  function setInputEnabled(enabled) {
+    const input = document.getElementById('chat-input');
+    const btn = document.getElementById('chat-send-btn');
+    if (input) input.disabled = !enabled;
+    if (btn) btn.disabled = !enabled;
+  }
+
+  window.autoResize = function(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  };
+
+  window.toggleKbPanel = function() {
+    const panel = document.getElementById('kb-panel');
+    if (!panel) return;
+    panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  };
+
+  // Start WebSocket
+  connectChatWs();
+})();
+</script>
