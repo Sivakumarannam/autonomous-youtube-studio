@@ -45,6 +45,7 @@ services:
       # Skips faster-whisper, forces static captions + draft encode,
       # disables Ken Burns/transitions. See app/core/config.py low_ram_mode.
       LOW_RAM_MODE: "true"
+      BACKGROUND_MUSIC_VOLUME_DB: "-22"
       VIDEO_QUALITY_PRESET: "draft"
       CAPTION_STYLE: "static"
       ENABLE_KEN_BURNS: "false"

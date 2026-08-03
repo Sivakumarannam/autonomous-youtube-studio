@@ -36,7 +36,7 @@ Configure:
     JAMENDO_CLIENT_ID=your_id_here   # free at https://devportal.jamendo.com/
 
 Audio mixing is done with pydub (already installed).
-The music is mixed under the voice at -18 dBFS (voice stays dominant).
+The music is mixed under the voice at -22 dBFS by default (voice stays dominant).
 """
 
 from __future__ import annotations
@@ -57,7 +57,6 @@ _CACHE_DIR = Path("./storage/cache/music")
 _LOCAL_MUSIC_DIR = Path("./storage/music")
 _TIMEOUT = 30.0
 
-# Music genre per channel category
 _CATEGORY_GENRE: dict[str, str] = {
     "technology":   "electronic",
     "ai":           "electronic",
@@ -77,9 +76,6 @@ _CATEGORY_GENRE: dict[str, str] = {
     "news":         "corporate",
 }
 
-# Jamendo uses its own tag vocabulary. Map our internal genre keys to tags
-# that reliably return results (Jamendo's "fuzzytags" search is lenient but
-# these are known-good terms).
 _GENRE_TO_JAMENDO_TAG: dict[str, str] = {
     "electronic": "electronic",
     "cinematic":  "cinematic",
@@ -102,7 +98,6 @@ def is_configured() -> bool:
 
 
 def genre_for_category(category: str) -> str:
-    """Return the best music genre for the given channel category."""
     return _CATEGORY_GENRE.get(category.lower(), "background")
 
 
@@ -110,20 +105,10 @@ async def fetch_track(
     genre: str = "background",
     duration_hint_seconds: float = 30.0,
 ) -> Optional[str]:
-    """
-    Fetch a background music track for `genre`.
-
-    Returns the local file path of a downloaded/local MP3, or None if
-    unavailable (caller must treat None as "render without music" — never
-    raises).
-    """
-    # 1. Local music directory first — fastest, zero network dependency,
-    #    zero licensing ambiguity if you've sourced the files yourself.
     local = _find_local_track(genre)
     if local:
         return local
 
-    # 2. Jamendo API — automated fallback. Requires JAMENDO_CLIENT_ID.
     if _jamendo_client_id():
         path = await _fetch_from_jamendo(genre, duration_hint_seconds)
         if path:
@@ -134,7 +119,6 @@ async def fetch_track(
 
 
 def _find_local_track(genre: str) -> Optional[str]:
-    """Search the local music directory for a matching genre track."""
     if not _LOCAL_MUSIC_DIR.exists():
         return None
     for f in _LOCAL_MUSIC_DIR.glob("*.mp3"):
@@ -145,12 +129,6 @@ def _find_local_track(genre: str) -> Optional[str]:
 
 
 async def _fetch_from_jamendo(genre: str, duration_hint_seconds: float) -> Optional[str]:
-    """Fetch a track from the Jamendo API and cache it locally.
-
-    Jamendo search endpoint: GET https://api.jamendo.com/v3.0/tracks/
-    Requires only a free client_id (no OAuth needed for public search/stream).
-    Docs: https://developer.jamendo.com/v3.0/tracks
-    """
     tag = _GENRE_TO_JAMENDO_TAG.get(genre, "chillout")
 
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -171,8 +149,6 @@ async def _fetch_from_jamendo(genre: str, duration_hint_seconds: float) -> Optio
                     "tags": tag,
                     "audioformat": "mp32",
                     "include": "musicinfo licenses",
-                    # ccsa=1 → Creative Commons ShareAlike (commercial OK)
-                    # This ensures tracks are safe for monetized YouTube uploads.
                     "ccsa": 1,
                     "order": "popularity_total",
                 },
@@ -181,15 +157,12 @@ async def _fetch_from_jamendo(genre: str, duration_hint_seconds: float) -> Optio
             data = resp.json()
 
             results = data.get("results", [])
-            # Keep only tracks that:
-            #   1. allow audio download (required to cache locally)
-            #   2. carry a CC license that permits commercial use
-            #      (CC BY or CC BY-SA — identified by absence of "nc" in the URL)
+
             def _is_commercial(track: dict) -> bool:
                 lic = (track.get("license_ccurl") or "").lower()
                 if not lic:
-                    return False          # unknown license — skip to be safe
-                return "nc" not in lic    # nc = NonCommercial → not safe
+                    return False
+                return "nc" not in lic
 
             downloadable = [
                 t for t in results
@@ -229,7 +202,7 @@ def mix_music_under_voice(
     voice_path: str,
     music_path: str,
     output_path: str,
-    music_volume_db: float = -18.0,
+    music_volume_db: float = -22.0,
     fade_in_ms: int = 1000,
     fade_out_ms: int = 1500,
 ) -> bool:
@@ -238,7 +211,8 @@ def mix_music_under_voice(
 
     The music is:
     - Looped if shorter than the voice track
-    - Volume-adjusted to `music_volume_db` (default -18 dBFS keeps voice dominant)
+    - Volume-adjusted to `music_volume_db` (default -22 dBFS keeps voice dominant)
+    - Extra-capped so music stays at least ~14 dB under the voice average
     - Faded in and out
     - Trimmed to match voice duration
 
@@ -250,7 +224,15 @@ def mix_music_under_voice(
         voice = AudioSegment.from_file(voice_path)
         music = AudioSegment.from_file(music_path)
 
-        music = music + (music_volume_db - music.dBFS)
+        if music.dBFS != float("-inf"):
+            music = music + (music_volume_db - music.dBFS)
+
+        # Safety: keep music at least ~14 dB under voice average
+        if voice.dBFS != float("-inf") and music.dBFS != float("-inf"):
+            max_music_dbfs = voice.dBFS - 14.0
+            if music.dBFS > max_music_dbfs:
+                music = music + (max_music_dbfs - music.dBFS)
+
         music = music.fade_in(fade_in_ms).fade_out(fade_out_ms)
 
         voice_ms = len(voice)
@@ -269,6 +251,9 @@ def mix_music_under_voice(
             music=music_path,
             output=output_path,
             voice_duration_s=round(voice_ms / 1000, 1),
+            music_volume_db=music_volume_db,
+            voice_dbfs=round(voice.dBFS, 1) if voice.dBFS != float("-inf") else None,
+            music_dbfs_after=round(music.dBFS, 1) if music.dBFS != float("-inf") else None,
         )
         return True
     except ImportError:

@@ -41,6 +41,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("Database ready")
 
+    from app.agents.video_agent.video_hook_bootstrap import apply_video_hook_overlay_patch
+    apply_video_hook_overlay_patch()
+
+    from app.agents.video_agent.caption_clip_bootstrap import apply_caption_clip_patch
+    apply_caption_clip_patch()
+
+    try:
+        from app.core.low_ram_bootstrap import apply_low_ram_patches
+        apply_low_ram_patches()
+    except Exception:
+        pass
+
     # ── Security: warn loudly if JWT_SECRET_KEY is still the dev default ──
     # The default "jwt-dev-secret" is public knowledge (it's in the source
     # code). Any deployment that reaches this with the default intact has a
