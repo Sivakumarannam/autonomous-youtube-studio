@@ -41,6 +41,16 @@ services:
       # operation runs, which turned out to be fragile (see the video
       # rendering "Permission denied" investigation).
       STORAGE_LOCAL_PATH: "/app/storage"
+      # ── Permanent OOM (exit 137) fix for Oracle Always Free ~1 GB ──
+      # Skips faster-whisper, forces static captions + draft encode,
+      # disables Ken Burns/transitions. See app/core/config.py low_ram_mode.
+      LOW_RAM_MODE: "true"
+      VIDEO_QUALITY_PRESET: "draft"
+      CAPTION_STYLE: "static"
+      ENABLE_KEN_BURNS: "false"
+      ENABLE_TRANSITIONS: "false"
+      PRESENTER_ENABLED: "false"
+      AUTOMATION_MAX_CONCURRENT_CHANNELS: "1"
     volumes:
       - app-storage:/app/storage
     # No "ports:" here anymore — Caddy (below) now owns 80/443 on the host
@@ -66,8 +76,8 @@ services:
     # real memory ceiling this whole time, despite appearing to. `mem_limit`
     # is the correct key for a standalone `docker compose up` and is
     # actually enforced via the container's cgroup.
-    mem_limit: 650m
-    memswap_limit: 900m
+    mem_limit: 750m
+    memswap_limit: 1500m
 
   # Reverse proxy with fully automatic HTTPS (Let's Encrypt) for the free
   # DuckDNS subdomain. Needed for Instagram cross-posting (Meta's Graph API
