@@ -126,7 +126,7 @@ class Settings(BaseSettings):
     voice_gender: str = "female"
 
     background_music_enabled: bool = True
-    background_music_volume_db: float = -18.0
+    background_music_volume_db: float = -22.0  # voice-first Shorts mix; was -18
     background_music_fade_in_ms: int = 1000
     background_music_fade_out_ms: int = 1500
 
