@@ -80,6 +80,42 @@ This is already configured in the Replit workflow.
 
 ---
 
+## 💥 Container killed — exit code 137 (OOM)
+
+**Cause:** Linux Out-Of-Memory killer. On Oracle Always Free (~1 GB RAM), loading **faster-whisper** and/or encoding with `VIDEO_QUALITY_PRESET=high` peaks past available RAM.
+
+**Permanent fix (already in `docker/docker-compose.oracle.yml`):**
+```bash
+# These are set automatically in the Oracle compose file:
+LOW_RAM_MODE=true
+VIDEO_QUALITY_PRESET=draft
+CAPTION_STYLE=static
+ENABLE_KEN_BURNS=false
+ENABLE_TRANSITIONS=false
+PRESENTER_ENABLED=false
+```
+
+**On the VM after pull:**
+```bash
+cd ~/studio
+git pull
+# Ensure host swap exists (one-time, free)
+sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+# persist: add to /etc/fstab → /swapfile none swap sw 0 0
+
+docker compose -f docker/docker-compose.oracle.yml up -d --build
+docker compose -f docker/docker-compose.oracle.yml logs api -f
+```
+
+You should see log line: `LOW_RAM_MODE active — Whisper skipped...`
+
+**If still killed:** upgrade shape to Ampere A1 (4+ GB free tier) or never run two pipelines at once.
+
+---
+
 ## 🖼️ Image Generation Errors
 
 ### `HuggingFace failed — NameResolutionError`
