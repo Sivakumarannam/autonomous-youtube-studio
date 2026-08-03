@@ -77,11 +77,8 @@
     {% include "dashboard/_notifications.html" %}
   </section>
 
-  <!-- Studio Assistant Chatbot -->
-  <section class="panel full" id="chat-panel">
-    {% include "dashboard/_chat.html" %}
-  </section>
-
+  <!-- Studio Assistant Chatbot — floating widget (no wrapper panel) -->
+  {% include "dashboard/_chat.html" %}
   <!-- Knowledge Base (hidden by default, toggled by chat header button) -->
   <section class="panel full" id="kb-panel"
            style="display:none;"

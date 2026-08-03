@@ -92,18 +92,31 @@ async def build_live_context(session: AsyncSession) -> str:
             lines.append("\nNo pipelines currently running.")
 
         # --- Upload queue / recent uploads ---
+        # NOTE: PublishStatus only has DRAFT/APPROVED/SCHEDULED/REJECTED —
+        # "pending" and "uploading" were never valid values for this column
+        # and previously caused a Postgres enum-comparison error here. That
+        # error, combined with the missing rollback() below, poisoned the
+        # whole DB session for the rest of the WebSocket connection (every
+        # later query failed with "current transaction is aborted" even
+        # though it had nothing to do with the real problem).
         try:
             from app.database.models.upload import PublishStatus
             queue_result = await session.execute(
                 select(Upload)
-                .where(Upload.publish_status.in_(["pending", "scheduled", "uploading"]))  # type: ignore[arg-type]
+                .where(Upload.publish_status.in_([
+                    PublishStatus.DRAFT, PublishStatus.APPROVED, PublishStatus.SCHEDULED,
+                ]))
                 .limit(10)
             )
             queue = queue_result.scalars().all()
             if queue:
                 lines.append(f"\nUpload queue: {len(queue)} pending")
         except Exception:
-            pass
+            # A failed query inside a Postgres transaction poisons every
+            # subsequent query on this session until rolled back — always
+            # roll back here, not just log, or every later query this
+            # session runs (including unrelated ones) will fail too.
+            await session.rollback()
 
         # Recent successful uploads
         uploads_result = await session.execute(
@@ -122,6 +135,10 @@ async def build_live_context(session: AsyncSession) -> str:
                 lines.append(f"  - {getattr(up, 'title', 'Untitled')[:60]} | status={status} | yt={yt_id}")
 
     except Exception as exc:
+        # Same reasoning as above — roll back so this session is usable
+        # for whatever query the chatbot engine runs next (e.g. saving the
+        # assistant's reply), not just logged and left poisoned.
+        await session.rollback()
         logger.warning("context_builder: DB query failed", error=str(exc))
         lines.append(f"\n[Context fetch partial — some data unavailable: {exc}]")
 
@@ -157,7 +174,7 @@ async def get_suggested_questions(session: AsyncSession) -> list[str]:
             suggestions.append("What's running right now?")
 
     except Exception:
-        pass
+        await session.rollback()
 
     # Always-on questions
     suggestions += [
