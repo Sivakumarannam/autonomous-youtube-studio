@@ -1,0 +1,21 @@
+INSERT INTO app/main.py lifespan, right after `logger.info("Database ready")`:
+
+    from app.core.low_ram_bootstrap import apply_low_ram_patches
+    apply_low_ram_patches()
+
+Or pull and replace app/main.py from this commit once the one-liner is applied on the server:
+
+python3 - <<'PY'
+from pathlib import Path
+p = Path("app/main.py")
+t = p.read_text()
+needle = '    logger.info("Database ready")\n'
+insert = needle + '\n    from app.core.low_ram_bootstrap import apply_low_ram_patches\n    apply_low_ram_patches()\n'
+if "apply_low_ram_patches" not in t:
+    if needle not in t:
+        raise SystemExit("needle not found")
+    p.write_text(t.replace(needle, insert, 1))
+    print("patched")
+else:
+    print("already patched")
+PY
