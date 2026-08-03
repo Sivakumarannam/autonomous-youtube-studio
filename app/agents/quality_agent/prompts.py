@@ -47,8 +47,12 @@ Score each dimension 0-100 and explain your reasoning:
 2. fact_consistency_score — accuracy, no contradictions, claims are plausible
 3. engagement_score — hook strength, pacing, pattern interrupts, curiosity gaps.
    Checklist (deduct points for each failure):
-   - Hook opens with an action verb, number, or bold claim in the FIRST 3 WORDS: -10 if missing
-   - The core conflict or problem is fully stated within the first 3 seconds: -10 if missing
+   - Hook opens with an action verb, number, or bold claim in the FIRST 3 WORDS: -15 if missing
+   - The core conflict or payoff is fully stated within the first 2-3 seconds of spoken text: -15 if missing
+   - First spoken line is a BANNED weak opener
+     ("Here's what", "In this video", "Welcome", "Have you ever wondered",
+      "Today we", "Let's talk", "I'm going to show you"): -20 if present
+   - For Shorts: hook longer than ~15 words or vague with no specific claim: -10
    - For long-form: MUST contain at least 3 distinct [PI]-tagged pattern interrupt lines
      (re-engagement phrases). Deduct 15 points if fewer than 3 are present.
    - For long-form: a mid-video subscribe CTA appears around the 4-minute mark: -5 if missing
