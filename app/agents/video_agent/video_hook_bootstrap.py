@@ -1,0 +1,45 @@
+"""Prefer spoken script.hook for on-screen overlay (monkeypatch render path).
+
+Applied from app.main lifespan so the first ~1.5s headline uses the spoken
+curiosity-gap hook instead of only seo_title.
+"""
+from __future__ import annotations
+
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+def apply_video_hook_overlay_patch() -> None:
+    """Wrap VideoAgentService.run_for_script so render() gets script.hook."""
+    try:
+        from app.agents.video_agent import service as vas
+    except Exception as exc:
+        logger.warning("video hook patch skipped", error=str(exc))
+        return
+
+    if getattr(vas.VideoAgentService, "_hook_overlay_patched", False):
+        return
+
+    original = vas.VideoAgentService.run_for_script
+
+    async def run_for_script(self, script, topic_title="", description="", script_type="long"):
+        orig_render = self._renderer.render
+
+        def render_wrapper(*args, **kwargs):
+            hook = (getattr(script, "hook", None) or "").strip()
+            if hook:
+                kwargs["hook_text"] = hook
+            elif not kwargs.get("hook_text"):
+                kwargs["hook_text"] = getattr(script, "seo_title", None) or topic_title
+            return orig_render(*args, **kwargs)
+
+        self._renderer.render = render_wrapper  # type: ignore[method-assign]
+        try:
+            return await original(self, script, topic_title, description, script_type)
+        finally:
+            self._renderer.render = orig_render  # type: ignore[method-assign]
+
+    vas.VideoAgentService.run_for_script = run_for_script  # type: ignore[assignment]
+    vas.VideoAgentService._hook_overlay_patched = True  # type: ignore[attr-defined]
+    logger.info("Video hook overlay patch applied (prefer script.hook)")
