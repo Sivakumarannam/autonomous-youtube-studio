@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from app.core.config import settings
@@ -26,6 +27,17 @@ from app.database.connection import init_db, close_db
 from app.llm_providers.factory import get_llm_provider
 
 logger = get_logger(__name__)
+
+
+def _client_ip(request: Request) -> str:
+    """Prefer real client IP behind Caddy / reverse proxy."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        # First hop is the original client
+        return forwarded.split(",")[0].strip() or "unknown"
+    if request.client and request.client.host:
+        return request.client.host
+    return get_remote_address(request) or "unknown"
 
 
 @asynccontextmanager
@@ -243,9 +255,29 @@ def create_app() -> FastAPI:
     # Rate limiting (SlowAPI)
     # ------------------------------------------------------------------
 
-    limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+    limiter = Limiter(key_func=_client_ip, default_limits=["200/minute"])
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # Templates needed for friendly login 429 (imported early for handler)
+    from fastapi.responses import HTMLResponse
+    from app.web.templates import templates as _templates_for_limit
+
+    async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+        if request.url.path == "/login" and request.method == "POST":
+            return _templates_for_limit.TemplateResponse(
+                request,
+                "login.html",
+                {
+                    "next": request.query_params.get("next", "/dashboard"),
+                    "error": "Too many login attempts — wait 1 minute and try again.",
+                },
+                status_code=429,
+            )
+        return _rate_limit_exceeded_handler(request, exc)
+
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+    # Required so @limiter.limit decorators are actually enforced
+    app.add_middleware(SlowAPIMiddleware)
 
     # ------------------------------------------------------------------
     # CORS
@@ -447,7 +479,7 @@ def create_app() -> FastAPI:
     from app.api.routes.websocket import router as websocket_router
     from app.api.routes.dashboard import router as dashboard_router
     from app.api.routes.channel_automation import router as channel_automation_router
-    from app.api.routes.internal_triggers import router as internal_triggers_router 
+    from app.api.routes.internal_triggers import router as internal_triggers_router
     # Shared auth dependency applied to every mutable API route
     _auth = [Depends(require_dashboard_auth)]
 
