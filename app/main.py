@@ -511,11 +511,22 @@ def create_app() -> FastAPI:
     async def root_redirect():
         return RedirectResponse(url="/dashboard")
 
-    # Serve storage files publicly so Instagram (and other services) can fetch
-    # generated videos via a direct URL.  Must be mounted before API routers.
+    # Public media: ONLY rendered videos (Instagram needs a direct HTTPS MP4 URL).
+    # Do NOT expose audio/, scripts/, cache/, presenter/, etc.
     import os as _os
+    from pathlib import Path as _StoragePath
+
     _storage_dir = _os.path.abspath(settings.storage_local_path)
-    app.mount("/storage", StaticFiles(directory=_storage_dir), name="storage")
+    _videos_dir = str(_StoragePath(_storage_dir) / "videos")
+    _StoragePath(_videos_dir).mkdir(parents=True, exist_ok=True)
+
+    app.mount(
+        "/storage/videos",
+        StaticFiles(directory=_videos_dir, html=False, check_dir=True),
+        name="storage-videos",
+    )
+    # Instagram / external fetch URL stays:
+    #   {public_base_url}/storage/videos/{filename}.mp4
 
     app.include_router(health_router, tags=["health"])
     app.include_router(
