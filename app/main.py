@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("Database ready")
 
-    from app.agents.video_agent.video_hook_bootstrap import apply_video_hook_overlay_patch
+    from app.agents.video_agent.video_hook_overlay_patch import apply_video_hook_overlay_patch
     apply_video_hook_overlay_patch()
 
     from app.agents.video_agent.caption_clip_bootstrap import apply_caption_clip_patch
@@ -60,6 +60,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from app.agents.video_agent.end_cta_bootstrap import apply_end_cta_patch
         apply_end_cta_patch()
+    except Exception:
+        pass
+
+    try:
+        from app.agents.video_agent.image_cache_cleanup_bootstrap import apply_image_cache_cleanup_patch
+        apply_image_cache_cleanup_patch()
     except Exception:
         pass
 
