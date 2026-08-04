@@ -5,6 +5,8 @@ Skips faster-whisper so the OOM killer never fires during transcription.
 
 Instead of pure word-count timing, prefers sentence timings written next to
 the voice MP3 by Kokoro (``*.timings.json``) when available.
+
+Long-form is allowed under LOW_RAM with hard caps on scene count and duration.
 """
 from __future__ import annotations
 
@@ -114,10 +116,63 @@ def apply_low_ram_patches() -> None:
 
     video_service.transcribe_sentences_from_audio = _align_without_whisper  # type: ignore[assignment]
 
+    # Cap long-form scene count / duration under LOW_RAM (still allows long)
+    _orig_resolve = video_service.VideoAgentService._resolve_scenes
+
+    async def _resolve_scenes_capped(self, script_id, output, script, audio_path=None):
+        scenes = await _orig_resolve(self, script_id, output, script, audio_path=audio_path)
+        script_type = str(getattr(script, "script_type", "") or "").lower()
+        if script_type != "long":
+            return scenes
+        if not getattr(settings, "allow_long_form_on_low_ram", True):
+            from app.core.exceptions import PipelineError
+
+            raise PipelineError(
+                "Long-form is disabled while LOW_RAM_MODE is on "
+                "(set ALLOW_LONG_FORM_ON_LOW_RAM=true to enable with caps)."
+            )
+        max_scenes = int(getattr(settings, "low_ram_long_max_scenes", 30) or 30)
+        max_dur = float(getattr(settings, "low_ram_long_max_duration_s", 480.0) or 480.0)
+        if len(scenes) > max_scenes:
+            logger.warning(
+                "low_ram long: truncating scenes",
+                before=len(scenes),
+                after=max_scenes,
+            )
+            scenes = scenes[:max_scenes]
+        total = sum(float(sc.get("duration_seconds") or 0) for sc in scenes)
+        if total > max_dur and total > 0:
+            scale = max_dur / total
+            for sc in scenes:
+                sc["duration_seconds"] = max(
+                    0.8, float(sc.get("duration_seconds") or 1.0) * scale
+                )
+            logger.warning(
+                "low_ram long: scaled duration to cap",
+                before_s=round(total, 1),
+                after_s=round(max_dur, 1),
+            )
+        return scenes
+
+    video_service.VideoAgentService._resolve_scenes = _resolve_scenes_capped  # type: ignore[assignment]
+
+    try:
+        import app.agents.video_agent.renderer as video_renderer
+
+        def _render_fps_low_ram() -> int:
+            return int(getattr(settings, "low_ram_long_target_fps", 24) or 24)
+
+        video_renderer._render_fps = _render_fps_low_ram  # type: ignore[assignment]
+    except Exception as exc:
+        logger.warning("low_ram fps patch skipped", error=str(exc))
+
     logger.info(
-        "LOW_RAM_MODE active — Whisper skipped; use static captions + light encode",
+        "LOW_RAM_MODE active — Whisper skipped; Shorts + capped Long; static captions + light encode",
         video_quality_preset=settings.video_quality_preset,
         caption_style=settings.caption_style,
         enable_ken_burns=settings.enable_ken_burns,
         enable_transitions=settings.enable_transitions,
+        allow_long=getattr(settings, "allow_long_form_on_low_ram", True),
+        long_max_duration_s=getattr(settings, "low_ram_long_max_duration_s", 480.0),
+        long_max_scenes=getattr(settings, "low_ram_long_max_scenes", 30),
     )
