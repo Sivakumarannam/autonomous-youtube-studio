@@ -253,11 +253,26 @@ class ShortScriptAgent:
             while len(hashtags) < 8:
                 hashtags.append(f"#Trend{len(hashtags)}")
 
+        seo_title = str(data.get("seo_title", topic_title[:60])).strip() or topic_title[:60]
+
+        hook, cta, full_script, seo_title = self._apply_script_qa(
+            hook=hook,
+            main=main,
+            cta=cta,
+            full_script=full_script,
+            seo_title=seo_title,
+        )
+
         seo_description = self._enrich_description(
             description=str(data.get("seo_description", "")),
             hashtags=hashtags,
             cta=cta,
         )
+
+        actual_word_count = len(full_script.split())
+        word_count = actual_word_count
+        duration = int(word_count / self.WORDS_PER_SECOND)
+        duration = max(25, min(28, duration))
 
         return ShortScriptAgentOutput(
             hook=hook,
@@ -266,11 +281,98 @@ class ShortScriptAgent:
             full_script=full_script,
             word_count=word_count,
             estimated_duration_seconds=duration,
-            seo_title=str(data.get("seo_title", topic_title[:60])),
+            seo_title=seo_title,
             seo_description=seo_description,
             tags=tags,
             hashtags=hashtags,
         )
+
+    def _apply_script_qa(
+        self,
+        hook: str,
+        main: str,
+        cta: str,
+        full_script: str,
+        seo_title: str,
+    ) -> tuple[str, str, str, str]:
+        """Enforce count honesty and CTA = last spoken line.
+
+        Returns (hook, cta, full_script, seo_title) possibly adjusted.
+        """
+        cta_clean = (cta or "").strip()
+        fs = (full_script or "").strip()
+        if cta_clean:
+            if cta_clean not in fs:
+                fs = (fs + " " + cta_clean).strip()
+                logger.info("Script QA: appended cta onto full_script for voice/caption match")
+            else:
+                if not fs.rstrip(".!?").endswith(cta_clean.rstrip(".!?")):
+                    fs_wo = fs.replace(cta_clean, " ").strip()
+                    fs_wo = re.sub(r"\s{2,}", " ", fs_wo)
+                    fs = (fs_wo + " " + cta_clean).strip()
+                    logger.info("Script QA: moved cta to end of full_script")
+
+        promised = self._extract_promised_count(hook, seo_title)
+        if promised is not None and promised >= 2:
+            items = self._count_main_items(main)
+            if items and items < promised:
+                logger.warning(
+                    "Script QA: hook/title promises more items than MAIN delivers",
+                    promised=promised,
+                    delivered=items,
+                )
+                seo_title = self._rewrite_count_in_title(seo_title, items)
+                hook = self._rewrite_count_in_title(hook, items)
+                logger.info(
+                    "Script QA: rewrote promised count to match MAIN",
+                    new_count=items,
+                )
+
+        return hook, cta_clean, fs, seo_title
+
+    @staticmethod
+    def _extract_promised_count(hook: str, seo_title: str) -> int | None:
+        blob = f"{hook or ''} {seo_title or ''}"
+        matches = re.findall(
+            r"(?:top\s*)?(\d)\s+(?:best |new |free |secret )?(?:\w+\s+){0,2}"
+            r"(?:phones?|apps?|tips?|hacks?|tricks?|ways?|tools?|ideas?|facts?|steps?|secrets?)",
+            blob,
+            flags=re.I,
+        )
+        if matches:
+            n = int(matches[0])
+            if 2 <= n <= 9:
+                return n
+        m = re.search(r"\b([2-9])\b", (seo_title or hook or "")[:40])
+        if m:
+            return int(m.group(1))
+        return None
+
+    @staticmethod
+    def _count_main_items(main: str) -> int:
+        if not main:
+            return 0
+        ordinals = re.findall(
+            r"\b(First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|"
+            r"1st|2nd|3rd|4th|5th|6th|7th|8th|9th)\b",
+            main,
+            flags=re.I,
+        )
+        if ordinals:
+            return len(ordinals)
+        numbered = re.findall(r"(?:^|[\s])([1-9])[\.\)]\s", main)
+        if numbered:
+            return len(numbered)
+        soft = re.findall(r"\b(Next|Then|Also|Plus)\b", main, flags=re.I)
+        if soft:
+            return len(soft) + 1
+        return 0
+
+    @staticmethod
+    def _rewrite_count_in_title(text: str, new_count: int) -> str:
+        if not text or new_count < 1:
+            return text
+        return re.sub(r"\b([2-9])\b", str(new_count), text, count=1)
 
     def _enrich_description(
         self,
