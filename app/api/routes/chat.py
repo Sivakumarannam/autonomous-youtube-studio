@@ -82,106 +82,152 @@ async def chat_websocket(websocket: WebSocket) -> None:
         async with factory() as db:
             await cleanup_old_messages(db)
 
-            # Create chat session row
-            chat_session = ChatSession(id=chat_session_id)
+            chat_session = ChatSession(
+                id=chat_session_id,
+                created_at=datetime.now(timezone.utc),
+                last_active_at=datetime.now(timezone.utc),
+            )
             db.add(chat_session)
             await db.commit()
 
-            # Send welcome + suggestions
-            suggestions = get_suggested_questions()
-            await websocket.send_json({
-                "type": "welcome",
-                "session_id": str(chat_session_id),
-                "suggestions": suggestions,
-            })
+            history_result = await db.execute(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == chat_session_id)
+                .order_by(ChatMessage.created_at)
+            )
+            prior = history_result.scalars().all()
+            conv_history: list[dict] = [
+                {"role": m.role, "content": m.content} for m in prior
+            ]
+
+            if prior:
+                await websocket.send_json({
+                    "type": "history",
+                    "messages": [
+                        {"role": m.role, "content": m.content} for m in prior
+                    ],
+                })
+
+            suggestions = await get_suggested_questions(db)
+            await websocket.send_json({"type": "suggested", "questions": suggestions})
 
             try:
                 while True:
                     raw = await websocket.receive_text()
                     try:
-                        payload = json.loads(raw)
+                        data = json.loads(raw)
                     except json.JSONDecodeError:
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": "Invalid JSON payload",
-                        })
+                        await websocket.send_json(
+                            {"type": "error", "text": "Invalid JSON"}
+                        )
                         continue
 
-                    msg_type = payload.get("type", "message")
-                    text = (payload.get("text") or payload.get("message") or "").strip()
+                    msg_type = data.get("type", "message")
 
                     if msg_type == "ping":
                         await websocket.send_json({"type": "pong"})
                         continue
 
-                    if not text:
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": "Empty message",
-                        })
+                    if msg_type == "escalate":
+                        try:
+                            record = await escalate(
+                                question=last_question or data.get("question", ""),
+                                context=last_context,
+                                session=db,
+                            )
+                            await websocket.send_json({
+                                "type": "escalated",
+                                "id": str(getattr(record, "id", "")),
+                            })
+                        except Exception as exc:
+                            logger.exception("Manual escalate failed")
+                            await websocket.send_json({
+                                "type": "error",
+                                "text": "Escalation failed.",
+                            })
                         continue
 
-                    last_question = text
+                    question = (data.get("text") or data.get("message") or "").strip()
+                    if not question:
+                        continue
 
-                    # Persist user message
+                    last_question = question
+
                     user_msg = ChatMessage(
+                        id=uuid.uuid4(),
                         session_id=chat_session_id,
                         role="user",
-                        content=text,
+                        content=question,
+                        created_at=datetime.now(timezone.utc),
                     )
                     db.add(user_msg)
                     chat_session.last_active_at = datetime.now(timezone.utc)
                     await db.commit()
 
-                    # Generate answer
-                    try:
-                        result = await answer_question(
-                            session=db,
-                            question=text,
-                            chat_session_id=chat_session_id,
-                        )
-                        answer = result.get("answer", "")
-                        last_context = result.get("context", "")
-                        confidence = result.get("confidence", 0.0)
-                        escalated = result.get("escalated", False)
-                    except Exception as exc:
-                        logger.exception("answer_question failed")
-                        answer = "Sorry, I hit an error answering that. Please try again."
-                        confidence = 0.0
-                        escalated = False
-                        last_context = ""
+                    conv_history.append({"role": "user", "content": question})
 
-                    # Persist assistant message
+                    streamed_tokens: list[str] = []
+
+                    async def on_token(token: str) -> None:
+                        streamed_tokens.append(token)
+                        await websocket.send_json({"type": "token", "text": token})
+
+                    try:
+                        sources, low_confidence = await answer_question(
+                            question=question,
+                            session=db,
+                            on_token=on_token,
+                            history=conv_history[:-1],
+                        )
+                    except Exception as exc:
+                        logger.exception("Chat engine error", error=str(exc))
+                        try:
+                            await db.rollback()
+                        except Exception:
+                            pass
+                        await websocket.send_json({
+                            "type": "error",
+                            "text": "An error occurred generating the answer.",
+                        })
+                        continue
+
+                    full_answer = "".join(streamed_tokens)
+                    last_context = full_answer[:500]
+
                     asst_msg = ChatMessage(
+                        id=uuid.uuid4(),
                         session_id=chat_session_id,
                         role="assistant",
-                        content=answer,
+                        content=full_answer,
+                        sources_json=json.dumps(sources) if sources else None,
+                        created_at=datetime.now(timezone.utc),
                     )
                     db.add(asst_msg)
+                    chat_session.last_active_at = datetime.now(timezone.utc)
                     await db.commit()
 
+                    conv_history.append({"role": "assistant", "content": full_answer})
+
                     await websocket.send_json({
-                        "type": "answer",
-                        "text": answer,
-                        "confidence": confidence,
-                        "escalated": escalated,
+                        "type": "done",
+                        "sources": sources,
+                        "low_confidence": low_confidence,
                     })
 
-                    if escalated:
+                    if low_confidence:
                         try:
-                            await escalate(
+                            record = await escalate(
                                 question=last_question,
                                 context=last_context,
-                                session_id=str(chat_session_id),
+                                session=db,
                             )
+                            await websocket.send_json({
+                                "type": "escalated",
+                                "id": str(getattr(record, "id", "")),
+                                "message": "I've flagged it for investigation.",
+                            })
                         except Exception:
-                            logger.exception("Escalation failed")
-                        await websocket.send_json({
-                            "type": "escalation",
-                            "message": (
-                                "I've flagged it for investigation."
-                            ),
-                        })
+                            logger.exception("Auto-escalation failed")
 
             except WebSocketDisconnect:
                 logger.info(
