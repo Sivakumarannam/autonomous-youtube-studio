@@ -23,14 +23,10 @@ Channel with ChannelAutomation.automation_status == RUNNING:
      per channel per tick, regardless of how many days were missed. Never
      backfill. A warning is logged when > 1 day was missed.
 
-Failure handling reuses the EXISTING Retry Manager unchanged:
-  - Retryable technical failures (network, Ollama unavailable, timeouts) are
-    handled by PipelineAgentService's own retry loop — this scheduler only
-    triggers pipeline creation, it does not re-implement retry/backoff.
-  - Permanent failures (quality gate rejection) mark that PipelineRun FAILED
-    and the Topic REJECTED (app/agents/pipeline_agent/service.py); this
-    scheduler's automation_status is never touched by a run's outcome. Only
-    explicit user action (Pause/Delete) changes automation_status.
+Also: global single-VM guard — if ANY pipeline is RUNNING, the whole tick
+skips starting new work (protects 1 GB Oracle + swap from concurrent encodes).
+
+Failure handling reuses the EXISTING Retry Manager unchanged.
 """
 from __future__ import annotations
 
@@ -108,12 +104,16 @@ class DailyAutomationScheduler:
         session_factory = _get_session_factory()
 
         # Watchdog: reset pipeline runs stuck in RUNNING for > 2 hours.
-        # These cannot be genuinely in-flight (healthy runs complete in < 30 min)
-        # and permanently block automation for their channel via
-        # has_running_for_channel(). The startup reconciler handles runs that
-        # were already stuck when the process started; this watchdog catches
-        # runs that get stuck mid-session (e.g. DB failure in the recovery path).
         await self._reset_stuck_pipeline_runs(session_factory)
+
+        # Global guard for 1 GB VMs: never start automation work while any
+        # pipeline is still RUNNING (avoids concurrent encode → OOM / swap thrash).
+        if await self._any_pipeline_running(session_factory):
+            logger.info(
+                "Automation tick skipped — a pipeline run is already RUNNING "
+                "(global single-VM guard)."
+            )
+            return
 
         async with session_factory() as session:
             automation_repo = ChannelAutomationRepository(session)
@@ -124,6 +124,25 @@ class DailyAutomationScheduler:
         for automation in running:
             channel_id = automation.channel_id
             asyncio.create_task(self._process_channel(channel_id))
+
+    async def _any_pipeline_running(self, session_factory) -> bool:
+        """True if any PipelineRun is currently RUNNING (all channels)."""
+        from sqlalchemy import select as _select, func as _func
+
+        try:
+            async with session_factory() as session:
+                n = await session.scalar(
+                    _select(_func.count())
+                    .select_from(PipelineRun)
+                    .where(PipelineRun.status == PipelineStatus.RUNNING)
+                )
+                return bool(n and n > 0)
+        except Exception as exc:
+            logger.warning(
+                "Automation tick: could not check global RUNNING pipelines.",
+                error=str(exc),
+            )
+            return False
 
     async def _reset_stuck_pipeline_runs(self, session_factory) -> None:
         """Find PipelineRuns stuck in RUNNING for > 2 hours and force them to FAILED.
@@ -191,12 +210,7 @@ class DailyAutomationScheduler:
             )
 
     async def _process_channel(self, channel_id: UUID) -> None:
-        """Process a single channel's daily tick under the concurrency semaphore.
-
-        The scheduler must not silently skip channels when the concurrency
-        limit is reached. Instead, it waits for an available slot and then
-        executes the channel tick so eligible channels are not dropped.
-        """
+        """Process a single channel's daily tick under the concurrency semaphore."""
         logger.info(
             "Automation tick: selected channel for processing.",
             channel_id=str(channel_id),
@@ -359,8 +373,6 @@ class DailyAutomationScheduler:
         if topic is not None:
             return topic
 
-        # No eligible topic found — trigger the existing Topic Agent to
-        # generate new ones, then select from the freshly generated batch.
         try:
             topic_agent_service = TopicAgentService(session)
             generated = await topic_agent_service.run_for_channel(
@@ -420,14 +432,6 @@ async def _run_pipeline_in_background(pipeline_run_id: UUID) -> None:
             svc = PipelineAgentService(session)
             await svc.run(run)
         except Exception as exc:
-            # Same failure mode as the manual-trigger path (see
-            # app/api/services/pipeline_service.py): if the DB connection
-            # itself died mid-render, PipelineAgentService.run()'s own error
-            # handling can ALSO fail, leaving the run stuck at
-            # status=running forever — which permanently blocks all future
-            # automation for the channel with no timeout to recover. Use a
-            # fresh session (the old one may be broken) to force a terminal
-            # FAILED state no matter what went wrong upstream.
             logger.error(
                 "Automation: pipeline background task raised outside service.run().",
                 pipeline_run_id=str(pipeline_run_id),
