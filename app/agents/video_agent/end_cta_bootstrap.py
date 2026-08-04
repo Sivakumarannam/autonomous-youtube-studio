@@ -24,8 +24,9 @@ def _display_text(cta_text: Optional[str]) -> str:
 def apply_end_cta_patch() -> None:
     try:
         from app.agents.video_agent.renderer import VideoRenderer
+        from app.agents.video_agent.service import VideoAgentService
     except Exception as exc:
-        logger.warning("End-CTA patch skipped — renderer import failed", error=str(exc))
+        logger.warning("End-CTA patch skipped — import failed", error=str(exc))
         return
 
     if getattr(VideoRenderer, "_end_cta_patch_applied", False):
@@ -33,6 +34,7 @@ def apply_end_cta_patch() -> None:
 
     _orig_render = VideoRenderer.render
     _orig_make = VideoRenderer._make_end_card_clip
+    _orig_run = VideoAgentService.run_for_script
 
     def render(self, *args, cta_text: Optional[str] = None, **kwargs):
         self._pending_cta_text = cta_text
@@ -45,12 +47,27 @@ def apply_end_cta_patch() -> None:
         try:
             want = float(getattr(settings, "end_card_duration_s", 2.5) or 2.5)
             if duration < want:
-                duration = min(want, duration * 2 if duration else want)
+                duration = want
         except Exception:
             pass
         return _orig_make(self, text, width, height, duration)
 
+    async def run_for_script(self, script, *args, **kwargs):
+        _r = self._renderer.render
+
+        def _wrapped(*a, **kw):
+            if "cta_text" not in kw:
+                kw["cta_text"] = getattr(script, "cta", None) or None
+            return _r(*a, **kw)
+
+        self._renderer.render = _wrapped  # type: ignore[method-assign]
+        try:
+            return await _orig_run(self, script, *args, **kwargs)
+        finally:
+            self._renderer.render = _r  # type: ignore[method-assign]
+
     VideoRenderer.render = render  # type: ignore[method-assign]
     VideoRenderer._make_end_card_clip = _make_end_card_clip  # type: ignore[method-assign]
+    VideoAgentService.run_for_script = run_for_script  # type: ignore[method-assign]
     VideoRenderer._end_cta_patch_applied = True  # type: ignore[attr-defined]
     logger.info("End-card CTA patch applied (prefer script.cta, duration from settings)")
