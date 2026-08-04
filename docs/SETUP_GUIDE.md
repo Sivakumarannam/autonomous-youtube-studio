@@ -68,7 +68,7 @@ PEXELS_API_KEY=your_pexels_key
 # Optional: Pixabay background music (free at pixabay.com/api/docs)
 PIXABAY_API_KEY=your_pixabay_key
 
-# Voice provider (auto selects best available)
+# Voice provider (auto selects best available — Kokoro if models present)
 VOICE_PROVIDER=auto
 ```
 
@@ -76,27 +76,36 @@ VOICE_PROVIDER=auto
 
 Kokoro produces human-quality audio and runs fully offline (CPU).
 
+The app loads these exact filenames under `storage/models/kokoro/`:
+
+- `kokoro-v1.0.int8.onnx` (~89 MB)
+- `voices-v1.0.bin` (~27 MB)
+
 ```bash
-# Install the package
-pip install kokoro-onnx soundfile
+# Package is already in requirements.txt (kokoro-onnx, soundfile).
 
 # Create model directory
 mkdir -p storage/models/kokoro
 
-# Download model files (~300 MB total)
-# kokoro-v0_19.onnx — ONNX model weights
-# voices.bin        — Voice embeddings
+# Download official v1.0 model files (matches app/integrations/kokoro_tts.py)
+curl -L -o storage/models/kokoro/kokoro-v1.0.int8.onnx \
+  "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx"
+curl -L -o storage/models/kokoro/voices-v1.0.bin \
+  "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
 
-# Using Python:
-python -c "
-from huggingface_hub import hf_hub_download
-hf_hub_download('hexgrad/Kokoro-82M', 'kokoro-v0_19.onnx', local_dir='storage/models/kokoro')
-hf_hub_download('hexgrad/Kokoro-82M', 'voices.bin', local_dir='storage/models/kokoro')
-print('Kokoro models downloaded.')
-"
+# Docker / Oracle volume (run inside the api container):
+# docker compose -f docker/docker-compose.oracle.yml exec api bash -c '
+#   mkdir -p /app/storage/models/kokoro && cd /app/storage/models/kokoro &&
+#   curl -L -o kokoro-v1.0.int8.onnx \
+#     "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx" &&
+#   curl -L -o voices-v1.0.bin \
+#     "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
+# '
 ```
 
 Verify: `python -c "from app.integrations.kokoro_tts import is_available; print(is_available())"`
+
+On success you should see `True` and a log line: `Kokoro TTS model loaded`.
 
 ## 5. Database Setup
 
@@ -144,6 +153,6 @@ Check `storage/videos/` for the output MP4.
 | `ffmpeg not found` | Add FFmpeg to PATH and restart terminal |
 | `Ollama not reachable` | Start Ollama: `ollama serve` |
 | `gTTS synthesis failed` | Check internet connection |
-| `kokoro not available` | Download model files (step 4 above) |
+| `kokoro not available` | Download model files (step 4 above) into `storage/models/kokoro/` |
 | `YouTube 400 error` | Check credentials; title must be ≤100 chars, no hashtags |
 | Black video frames | Check `storage/images/` — image generation may be failing |
