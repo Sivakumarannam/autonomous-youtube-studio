@@ -52,6 +52,22 @@ def make_session_cookie(token: str) -> str:
     return _make_cookie_value(token)
 
 
+def is_ws_session_valid(cookie_value: str | None) -> bool:
+    """Validate dashboard session cookie for WebSocket upgrades.
+
+    - Production with no DASHBOARD_AUTH_TOKEN → reject (fail closed)
+    - Development with no token → allow (open local dev)
+    - Otherwise require a valid HMAC session cookie
+    """
+    if not settings.dashboard_auth_token:
+        if settings.app_env == "development":
+            return True
+        return False
+    if not cookie_value:
+        return False
+    return _cookie_valid(cookie_value)
+
+
 async def require_dashboard_auth(
     request: Request,
     bearer: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
