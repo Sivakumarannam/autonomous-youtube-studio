@@ -10,45 +10,26 @@ triggers HTMX partial refreshes — it does not render HTML itself.
 
 Auth: the browser must hold a valid `yt_studio_session` cookie (set at login).
       Unauthenticated connections are closed with code 1008 (Policy Violation).
-      When DASHBOARD_AUTH_TOKEN is not configured (dev mode) auth is skipped.
+      Development without DASHBOARD_AUTH_TOKEN allows open access; production rejects.
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
-import secrets
-
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.core.config import settings
 from app.core.logging import get_logger
+from app.web.auth import COOKIE_NAME, is_ws_session_valid
 from app.websocket.manager import get_connection_manager
 
 logger = get_logger(__name__)
 
 router = APIRouter()
 
-_COOKIE_NAME = "yt_studio_session"
-
-
-def _cookie_valid(cookie_value: str) -> bool:
-    """Return True if the session cookie was signed with the current auth token."""
-    token = settings.dashboard_auth_token
-    if not token:
-        return True  # dev mode — no auth configured, allow all
-    sig = hmac.new(token.encode(), token.encode(), hashlib.sha256).hexdigest()
-    expected = sig
-    try:
-        return secrets.compare_digest(cookie_value, expected)
-    except Exception:
-        return False
-
 
 @router.websocket("/pipeline")
 async def pipeline_updates(websocket: WebSocket) -> None:
     # Validate session cookie before accepting the connection.
-    cookie_value = websocket.cookies.get(_COOKIE_NAME, "")
-    if not _cookie_valid(cookie_value):
+    cookie_value = websocket.cookies.get(COOKIE_NAME)
+    if not is_ws_session_valid(cookie_value):
         await websocket.close(code=1008)  # 1008 = Policy Violation
         logger.warning("WebSocket connection rejected — invalid or missing session cookie.")
         return
