@@ -1,1 +1,266 @@
-PLACEHOLDER
+"""Chat API routes — Studio Assistant chatbot.
+WebSocket:
+  /ws/chat — bidirectional chat (auth via yt_studio_session cookie)
+REST (all require dashboard auth):
+  GET /api/v1/chat/kb/docs — list knowledge base documents
+  POST /api/v1/chat/kb/docs — ingest a new document
+  DELETE /api/v1/chat/kb/docs/{doc_id} — delete a document
+Dashboard partials (auth guarded):
+  GET /dashboard/partials/knowledge-base — render _knowledge_base.html
+"""
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime, timezone, timedelta
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from sqlalchemy import select, delete
+from sqlalchemy.exc import InterfaceError, DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.logging import get_logger
+from app.database.connection import get_db
+from app.database.models.chat import ChatSession, ChatMessage
+from app.chatbot.engine import answer_question
+from app.chatbot.escalation import escalate
+from app.chatbot.knowledge_base import (
+    ingest_document,
+    delete_document,
+    list_documents,
+    TOPIC_KNOWLEDGE,
+)
+from app.chatbot.context_builder import get_suggested_questions
+from app.web.auth import COOKIE_NAME, is_ws_session_valid, require_dashboard_auth
+from app.web.templates import templates
+
+logger = get_logger(__name__)
+
+ws_router = APIRouter()
+api_router = APIRouter()
+dash_router = APIRouter()
+
+
+async def cleanup_old_messages(session: AsyncSession) -> int:
+    """Delete chat messages older than 24 hours. Returns row count."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    result = await session.execute(
+        delete(ChatMessage).where(ChatMessage.created_at < cutoff)
+    )
+    await session.execute(
+        delete(ChatSession).where(ChatSession.last_active_at < cutoff)
+    )
+    await session.commit()
+    deleted = result.rowcount or 0
+    if deleted:
+        logger.info("Pruned old chat messages", count=deleted)
+    return deleted
+
+
+@ws_router.websocket("/chat")
+async def chat_websocket(websocket: WebSocket) -> None:
+    """Bidirectional chat WebSocket."""
+    cookie_value = websocket.cookies.get(COOKIE_NAME)
+    if not is_ws_session_valid(cookie_value):
+        await websocket.close(code=1008)
+        logger.warning("Chat WebSocket rejected — invalid session cookie")
+        return
+
+    await websocket.accept()
+
+    chat_session_id = uuid.uuid4()
+    last_question: str = ""
+    last_context: str = ""
+
+    from app.database.connection import get_session_factory
+    factory = get_session_factory()
+
+    try:
+        async with factory() as db:
+            await cleanup_old_messages(db)
+
+            # Create chat session row
+            chat_session = ChatSession(id=chat_session_id)
+            db.add(chat_session)
+            await db.commit()
+
+            # Send welcome + suggestions
+            suggestions = get_suggested_questions()
+            await websocket.send_json({
+                "type": "welcome",
+                "session_id": str(chat_session_id),
+                "suggestions": suggestions,
+            })
+
+            try:
+                while True:
+                    raw = await websocket.receive_text()
+                    try:
+                        payload = json.loads(raw)
+                    except json.JSONDecodeError:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Invalid JSON payload",
+                        })
+                        continue
+
+                    msg_type = payload.get("type", "message")
+                    text = (payload.get("text") or payload.get("message") or "").strip()
+
+                    if msg_type == "ping":
+                        await websocket.send_json({"type": "pong"})
+                        continue
+
+                    if not text:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Empty message",
+                        })
+                        continue
+
+                    last_question = text
+
+                    # Persist user message
+                    user_msg = ChatMessage(
+                        session_id=chat_session_id,
+                        role="user",
+                        content=text,
+                    )
+                    db.add(user_msg)
+                    chat_session.last_active_at = datetime.now(timezone.utc)
+                    await db.commit()
+
+                    # Generate answer
+                    try:
+                        result = await answer_question(
+                            session=db,
+                            question=text,
+                            chat_session_id=chat_session_id,
+                        )
+                        answer = result.get("answer", "")
+                        last_context = result.get("context", "")
+                        confidence = result.get("confidence", 0.0)
+                        escalated = result.get("escalated", False)
+                    except Exception as exc:
+                        logger.exception("answer_question failed")
+                        answer = "Sorry, I hit an error answering that. Please try again."
+                        confidence = 0.0
+                        escalated = False
+                        last_context = ""
+
+                    # Persist assistant message
+                    asst_msg = ChatMessage(
+                        session_id=chat_session_id,
+                        role="assistant",
+                        content=answer,
+                    )
+                    db.add(asst_msg)
+                    await db.commit()
+
+                    await websocket.send_json({
+                        "type": "answer",
+                        "text": answer,
+                        "confidence": confidence,
+                        "escalated": escalated,
+                    })
+
+                    if escalated:
+                        try:
+                            await escalate(
+                                question=last_question,
+                                context=last_context,
+                                session_id=str(chat_session_id),
+                            )
+                        except Exception:
+                            logger.exception("Escalation failed")
+                        await websocket.send_json({
+                            "type": "escalation",
+                            "message": (
+                                "I've flagged it for investigation."
+                            ),
+                        })
+
+            except WebSocketDisconnect:
+                logger.info(
+                    "Chat WebSocket disconnected",
+                    session=str(chat_session_id),
+                )
+            except Exception:
+                logger.exception("Chat WebSocket error")
+
+    except (InterfaceError, DBAPIError) as exc:
+        logger.info(
+            "Chat WebSocket session closed with dead DB connection",
+            session=str(chat_session_id),
+            error=str(exc),
+        )
+
+
+class IngestDocRequest(BaseModel):
+    title: str
+    text: str
+    topic_id: str = TOPIC_KNOWLEDGE
+
+
+@api_router.get("/kb/docs", dependencies=[Depends(require_dashboard_auth)])
+async def list_kb_docs(db: AsyncSession = Depends(get_db)):
+    docs = await list_documents(db)
+    return [
+        {
+            "id": str(d.id),
+            "title": d.title,
+            "source_type": d.source_type,
+            "topic_id": d.topic_id,
+            "chunk_count": d.chunk_count,
+            "active": d.active,
+            "ingested_at": d.ingested_at.isoformat(),
+        }
+        for d in docs
+    ]
+
+
+@api_router.post(
+    "/kb/docs",
+    dependencies=[Depends(require_dashboard_auth)],
+    status_code=201,
+)
+async def ingest_kb_doc(body: IngestDocRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        doc = await ingest_document(
+            session=db,
+            title=body.title,
+            text=body.text,
+            topic_id=body.topic_id,
+        )
+        return {"id": str(doc.id), "chunk_count": doc.chunk_count}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@api_router.delete(
+    "/kb/docs/{doc_id}",
+    dependencies=[Depends(require_dashboard_auth)],
+)
+async def delete_kb_doc(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    deleted = await delete_document(db, doc_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"deleted": True}
+
+
+@dash_router.get(
+    "/knowledge-base",
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_dashboard_auth)],
+    include_in_schema=False,
+)
+async def kb_partial(request: Request, db: AsyncSession = Depends(get_db)):
+    docs = await list_documents(db)
+    return templates.TemplateResponse(
+        request,
+        "dashboard/_knowledge_base.html",
+        {"docs": docs},
+    )
