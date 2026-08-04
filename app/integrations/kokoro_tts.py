@@ -24,10 +24,20 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+
+def _resolve_model_dir() -> Path:
+    """Prefer KOKORO_MODEL_DIR, else STORAGE_LOCAL_PATH/models/kokoro, else ./storage/..."""
+    env = os.environ.get("KOKORO_MODEL_DIR")
+    if env:
+        return Path(env)
+    storage = os.environ.get("STORAGE_LOCAL_PATH", "./storage")
+    return Path(storage) / "models" / "kokoro"
+
+
 # Model files are stored in storage/models/kokoro/
 # kokoro-onnx v0.5+ uses the v1.0 model format.
 # The int8 build (~92 MB) gives nearly identical quality to fp32 (~325 MB) on CPU.
-_MODEL_DIR = Path(os.environ.get("KOKORO_MODEL_DIR", "./storage/models/kokoro"))
+_MODEL_DIR = _resolve_model_dir()
 _ONNX_PATH = _MODEL_DIR / "kokoro-v1.0.int8.onnx"
 _VOICES_PATH = _MODEL_DIR / "voices-v1.0.bin"
 
@@ -40,17 +50,28 @@ DEFAULT_MALE = "am_adam"
 _kokoro_instance: Optional[object] = None
 
 
+def _refresh_paths() -> None:
+    """Re-resolve model paths (env may be set after first import)."""
+    global _MODEL_DIR, _ONNX_PATH, _VOICES_PATH
+    _MODEL_DIR = _resolve_model_dir()
+    _ONNX_PATH = _MODEL_DIR / "kokoro-v1.0.int8.onnx"
+    _VOICES_PATH = _MODEL_DIR / "voices-v1.0.bin"
+
+
 def _get_kokoro():
     """Lazy-load the Kokoro model. Returns None if unavailable."""
     global _kokoro_instance
     if _kokoro_instance is not None:
         return _kokoro_instance
 
+    _refresh_paths()
+
     if not _ONNX_PATH.exists() or not _VOICES_PATH.exists():
         logger.debug(
             "Kokoro model files not found — skipping Kokoro TTS",
-            onnx=str(_ONNX_PATH),
-            voices=str(_VOICES_PATH),
+            onnx=str(_ONNX_PATH.resolve()) if _ONNX_PATH else None,
+            voices=str(_VOICES_PATH.resolve()) if _VOICES_PATH else None,
+            cwd=str(Path.cwd()),
         )
         return None
 
@@ -105,6 +126,13 @@ def _split_into_chunks(text: str, max_chars: int = 800) -> list[str]:
     if current:
         chunks.append(current.strip())
     return [c for c in chunks if c]
+
+
+def split_spoken_sentences(text: str) -> list[str]:
+    """Split narration into spoken sentences (same rule as video captions)."""
+    import re
+    parts = re.split(r"(?<=[.!?])\s+", (text or "").strip())
+    return [p.strip() for p in parts if p.strip()]
 
 
 def synthesise_sync(
@@ -171,6 +199,59 @@ def synthesise_sync(
         return False
 
 
+def synthesise_sentences_sync(
+    sentences: list[str],
+    output_path: str,
+    voice: str = DEFAULT_FEMALE,
+    speed: float = 1.0,
+    language: str = "en-us",
+) -> list[tuple[float, float]]:
+    """
+    Synthesise each sentence, concatenate, write WAV, return per-sentence
+    (start_sec, end_sec) timings. Used for low-RAM scene/caption sync
+    without Whisper.
+    """
+    kokoro = _get_kokoro()
+    if kokoro is None or not sentences:
+        return []
+
+    try:
+        import numpy as np  # type: ignore
+        import soundfile as sf  # type: ignore
+
+        all_samples: list = []
+        sample_rate: int = 24000
+        timings: list[tuple[float, float]] = []
+        t = 0.0
+
+        for i, sent in enumerate(sentences):
+            samples, sr = kokoro.create(
+                sent,
+                voice=voice,
+                speed=speed,
+                lang=language,
+            )
+            sample_rate = sr
+            dur = float(len(samples)) / float(sr)
+            timings.append((t, t + dur))
+            t += dur
+            all_samples.append(samples)
+            logger.debug("Kokoro sentence done", sentence=i + 1, total=len(sentences), duration=round(dur, 3))
+
+        combined = np.concatenate(all_samples) if len(all_samples) > 1 else all_samples[0]
+        sf.write(output_path, combined, sample_rate)
+        logger.info(
+            "Kokoro sentence-timed synthesis complete",
+            sentences=len(sentences),
+            total_duration=round(t, 3),
+            output=output_path,
+        )
+        return timings
+    except Exception as exc:
+        logger.warning("Kokoro sentence synthesis failed", error=str(exc))
+        return []
+
+
 async def synthesise(
     text: str,
     output_path: str,
@@ -184,6 +265,26 @@ async def synthesise(
         None,
         synthesise_sync,
         text,
+        output_path,
+        voice,
+        speed,
+        language,
+    )
+
+
+async def synthesise_sentences(
+    sentences: list[str],
+    output_path: str,
+    voice: str = DEFAULT_FEMALE,
+    speed: float = 1.0,
+    language: str = "en-us",
+) -> list[tuple[float, float]]:
+    """Async wrapper for per-sentence synthesis + timings."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        synthesise_sentences_sync,
+        sentences,
         output_path,
         voice,
         speed,
