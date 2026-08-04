@@ -157,7 +157,7 @@ class Settings(BaseSettings):
 
     end_card_enabled: bool = True
     end_card_text: str = "FOLLOW FOR MORE"
-    end_card_duration_s: float = 1.5
+    end_card_duration_s: float = 2.5
     end_card_margin_px: int = 20
 
     storage_backend: Literal["local", "s3", "minio"] = "local"
@@ -248,18 +248,6 @@ class Settings(BaseSettings):
     seo_min_score: int = 60
     engagement_min_score: int = 65
 
-    # ------------------------------------------------------------------
-    # Low-RAM / Oracle Always Free mode
-    #
-    # Oracle "Micro" (~1 GB RAM) cannot hold faster-whisper + MoviePy high
-    # encode at the same time → Linux OOM killer (docker exit 137).
-    # When True, the pipeline:
-    #   - skips faster-whisper (word-count scene timing instead)
-    #   - forces caption_style=static (no karaoke word timestamps)
-    #   - forces video_quality_preset to draft if still "high"/"cinematic"
-    #   - disables Ken Burns + crossfade transitions (less peak memory)
-    # Set LOW_RAM_MODE=true in docker-compose.oracle.yml / .env.
-    # ------------------------------------------------------------------
     low_ram_mode: bool = False
 
     video_quality_preset: Literal["draft", "standard", "high", "cinematic"] = "high"
@@ -275,15 +263,11 @@ class Settings(BaseSettings):
         """Clamp heavy settings when running on ~1 GB VMs (Oracle Micro)."""
         if not self.low_ram_mode:
             return self
-        # Karaoke needs Whisper word timestamps → force static captions
         self.caption_style = "static"
-        # high/cinematic peak RAM during encode; draft is safe, standard OK
         if self.video_quality_preset in ("high", "cinematic"):
             self.video_quality_preset = "draft"
         self.enable_ken_burns = False
         self.enable_transitions = False
-        # Presenter + HF download is another memory spike — leave user toggle,
-        # but recommend off via compose defaults.
         return self
 
     pipeline_publish_delay_minutes: int = 15
