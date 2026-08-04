@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("Database ready")
 
-    from app.agents.video_agent.video_hook_overlay_patch import apply_video_hook_overlay_patch
+    from app.agents.video_agent.video_hook_bootstrap import apply_video_hook_overlay_patch
     apply_video_hook_overlay_patch()
 
     from app.agents.video_agent.caption_clip_bootstrap import apply_caption_clip_patch
@@ -351,19 +351,19 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(AuthorizationError)
     async def authorization_handler(request: Request, exc: AuthorizationError) -> JSONResponse:
-        return JSONResponse(status_code=403, content={"error": exc.code, "message": exc.message})
+        return JSONResponse(status_code=403, content={"error": exc.code, "message": exp.message})
 
     @app.exception_handler(PipelineError)
     async def pipeline_error_handler(request: Request, exc: PipelineError) -> JSONResponse:
-        return JSONResponse(status_code=422, content={"error": exc.code, "message": exc.message})
+        return JSONResponse(status_code=422, content={"error": exp.code, "message": exp.message})
 
     @app.exception_handler(PublishError)
     async def publish_error_handler(request: Request, exc: PublishError) -> JSONResponse:
-        return JSONResponse(status_code=409, content={"error": exc.code, "message": exc.message})
+        return JSONResponse(status_code=409, content={"error": exp.code, "message": exp.message})
 
     @app.exception_handler(YouTubeStudioException)
     async def studio_exception_handler(request: Request, exc: YouTubeStudioException) -> JSONResponse:
-        return JSONResponse(status_code=500, content={"error": exc.code, "message": exc.message})
+        return JSONResponse(status_code=500, content={"error": exp.code, "message": exp.message})
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
