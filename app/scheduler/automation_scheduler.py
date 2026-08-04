@@ -16,6 +16,7 @@ Channel with ChannelAutomation.automation_status == RUNNING:
   e. Increment cumulative_active_days by 1 for this processing day.
   f. Determine content plan (Shorts-only through day 15; Short + conditional
      Long from day 16 on, gated by long_video_interval_days).
+     Under LOW_RAM_MODE: Long is deferred so Short and Long never share a tick.
   g. Topic selection: reuse an eligible existing Topic, else trigger the
      Topic Agent to generate new ones.
   h. Update last_run_date = today after creating this tick's run(s).
@@ -96,18 +97,11 @@ class DailyAutomationScheduler:
             self._scheduler.shutdown(wait=False)
             logger.info("Daily automation scheduler stopped.")
 
-    # ------------------------------------------------------------------
-    # Tick
-    # ------------------------------------------------------------------
-
     async def _tick(self) -> None:
         session_factory = _get_session_factory()
 
-        # Watchdog: reset pipeline runs stuck in RUNNING for > 2 hours.
         await self._reset_stuck_pipeline_runs(session_factory)
 
-        # Global guard for 1 GB VMs: never start automation work while any
-        # pipeline is still RUNNING (avoids concurrent encode → OOM / swap thrash).
         if await self._any_pipeline_running(session_factory):
             logger.info(
                 "Automation tick skipped — a pipeline run is already RUNNING "
@@ -145,13 +139,7 @@ class DailyAutomationScheduler:
             return False
 
     async def _reset_stuck_pipeline_runs(self, session_factory) -> None:
-        """Find PipelineRuns stuck in RUNNING for > 2 hours and force them to FAILED.
-
-        A healthy pipeline run completes in well under 30 minutes. Anything
-        still RUNNING after 2 hours is a zombie — most likely left behind when
-        the inner recovery path in _run_pipeline_in_background() also failed.
-        Resetting it here unblocks the channel for the next automation tick.
-        """
+        """Find PipelineRuns stuck in RUNNING for > 2 hours and force them to FAILED."""
         from sqlalchemy import select as _select, and_ as _and_
 
         STUCK_THRESHOLD_HOURS = 2
@@ -201,7 +189,7 @@ class DailyAutomationScheduler:
                             extra={"🆔 Run ID": str(run.id), "📌 Stage": run.failed_stage or "unknown"},
                         )
                 except Exception:
-                    pass  # notifications are best-effort
+                    pass
 
         except Exception as exc:
             logger.error(
@@ -210,7 +198,6 @@ class DailyAutomationScheduler:
             )
 
     async def _process_channel(self, channel_id: UUID) -> None:
-        """Process a single channel's daily tick under the concurrency semaphore."""
         logger.info(
             "Automation tick: selected channel for processing.",
             channel_id=str(channel_id),
@@ -257,7 +244,6 @@ class DailyAutomationScheduler:
 
             today = _today_in_timezone(channel.timezone)
 
-            # (b) already ran today
             if automation.last_run_date == today:
                 logger.info(
                     "Automation tick: already ran today, skipping.",
@@ -266,7 +252,6 @@ class DailyAutomationScheduler:
                 )
                 return
 
-            # (c) overlap protection
             if await pipeline_repo.has_running_for_channel(channel_id):
                 logger.info(
                     "Automation tick: a PipelineRun is already RUNNING for "
@@ -275,7 +260,6 @@ class DailyAutomationScheduler:
                 )
                 return
 
-            # (i) missed-day policy — log a warning, never backfill.
             if automation.last_run_date is not None:
                 missed_days = (today - automation.last_run_date).days - 1
                 if missed_days > 0:
@@ -287,7 +271,6 @@ class DailyAutomationScheduler:
                         last_run_date=str(automation.last_run_date),
                     )
 
-            # (e) increment cumulative_active_days for this processing day
             new_cumulative_days = automation.cumulative_active_days + 1
 
             # (f) content plan
@@ -300,6 +283,16 @@ class DailyAutomationScheduler:
                         today - automation.last_long_pipeline_date
                     ).days
                     create_long = days_since_long >= automation.long_video_interval_days
+
+            # LOW_RAM (1 GB VM): never start Short + Long in the same tick.
+            # Prefer Short today; Long waits for a later eligible day.
+            if settings.low_ram_mode and create_long:
+                logger.info(
+                    "LOW_RAM: deferring Long to a later day (one content type per tick)",
+                    channel_id=str(channel_id),
+                    cumulative_active_days=new_cumulative_days,
+                )
+                create_long = False
 
             created_run_ids: list[UUID] = []
 
@@ -337,7 +330,6 @@ class DailyAutomationScheduler:
                         channel_id=str(channel_id),
                     )
 
-            # (h) update last_run_date + cumulative_active_days
             automation = await automation_repo.update(
                 automation,
                 last_run_date=today,
@@ -459,7 +451,6 @@ async def _run_pipeline_in_background(pipeline_run_id: UUID) -> None:
                 )
 
 
-# Module-level singleton used by the FastAPI lifespan.
 _automation_scheduler: DailyAutomationScheduler | None = None
 
 
