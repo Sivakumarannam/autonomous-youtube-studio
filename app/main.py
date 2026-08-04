@@ -69,7 +69,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         pass
 
+    # ── Production secret hygiene (fail closed) ───────────────────────────
     _JWT_DEV_DEFAULT = "jwt-dev-secret"
+    _WEAK_APP_SECRETS = {
+        "dev-secret-key",
+        "changeme",
+        "secret",
+        "password",
+        "app-secret",
+        "session-secret",
+    }
+
     if settings.jwt_secret_key == _JWT_DEV_DEFAULT:
         _msg = (
             "SECURITY: JWT_SECRET_KEY is the hardcoded dev default "
@@ -78,8 +88,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         if settings.app_env == "production":
             raise RuntimeError(_msg)
-        else:
-            logger.warning(_msg)
+        logger.warning(_msg)
+
+    if settings.app_env == "production":
+        if not (settings.dashboard_auth_token or "").strip():
+            raise RuntimeError(
+                "SECURITY: DASHBOARD_AUTH_TOKEN must be set in production "
+                "(dashboard would be open or unusable)."
+            )
+        _app_secret = (settings.app_secret_key or "").strip().lower()
+        if _app_secret in _WEAK_APP_SECRETS or len(_app_secret) < 16:
+            raise RuntimeError(
+                "SECURITY: APP_SECRET_KEY is weak or too short in production. "
+                "Set a strong random value (e.g. python -c "
+                '"import secrets; print(secrets.token_urlsafe(32))").'
+            )
 
     from sqlalchemy import select as _select
 
