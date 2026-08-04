@@ -128,23 +128,29 @@ async def chat_websocket(websocket: WebSocket) -> None:
                         await websocket.send_json({"type": "pong"})
                         continue
 
-                    if msg_type == "escalate":
-                        try:
-                            record = await escalate(
-                                question=last_question or data.get("question", ""),
-                                context=last_context,
-                                session=db,
-                            )
-                            await websocket.send_json({
-                                "type": "escalated",
-                                "id": str(getattr(record, "id", "")),
-                            })
-                        except Exception as exc:
-                            logger.exception("Manual escalate failed")
-                            await websocket.send_json({
-                                "type": "error",
-                                "text": "Escalation failed.",
-                            })
+                    if msg_type in ("escalate", "flag"):
+                        if last_question or data.get("question"):
+                            try:
+                                record = await escalate(
+                                    db,
+                                    question=last_question or data.get("question", ""),
+                                    context_snapshot=last_context,
+                                    chat_session_id=chat_session_id,
+                                )
+                                await websocket.send_json({
+                                    "type": "escalated",
+                                    "id": str(record.id),
+                                    "text": (
+                                        "I've flagged this for investigation. "
+                                        "You'll receive a notification when it's resolved."
+                                    ),
+                                })
+                            except Exception:
+                                logger.exception("Manual escalate failed")
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "text": "Escalation failed.",
+                                })
                         continue
 
                     question = (data.get("text") or data.get("message") or "").strip()
@@ -217,14 +223,18 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     if low_confidence:
                         try:
                             record = await escalate(
-                                question=last_question,
-                                context=last_context,
-                                session=db,
+                                db,
+                                question=question,
+                                context_snapshot=last_context,
+                                chat_session_id=chat_session_id,
                             )
                             await websocket.send_json({
                                 "type": "escalated",
-                                "id": str(getattr(record, "id", "")),
-                                "message": "I've flagged it for investigation.",
+                                "id": str(record.id),
+                                "text": (
+                                    "I'm not fully certain about this answer — "
+                                    "I've flagged it for investigation."
+                                ),
                             })
                         except Exception:
                             logger.exception("Auto-escalation failed")
