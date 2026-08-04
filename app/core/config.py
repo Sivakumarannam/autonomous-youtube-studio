@@ -250,6 +250,12 @@ class Settings(BaseSettings):
 
     low_ram_mode: bool = False
 
+    # Long-form under LOW_RAM (1 GB + swap): allowed with hard caps
+    allow_long_form_on_low_ram: bool = True
+    low_ram_long_max_duration_s: float = 480.0  # 8 minutes
+    low_ram_long_max_scenes: int = 30
+    low_ram_long_target_fps: int = 24
+
     video_quality_preset: Literal["draft", "standard", "high", "cinematic"] = "high"
     enable_transitions: bool = True
     enable_ken_burns: bool = True
