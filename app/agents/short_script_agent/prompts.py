@@ -34,6 +34,22 @@ Speaking pace: approximately 155-165 words per minute
 
 LOOP-ABLE ENDINGS: The last CTA line must connect thematically back to the hook.
 
+SCRIPT QA HARD RULES (must never violate):
+  COUNT ACCURACY:
+  - If the hook or seo_title uses a count number (e.g. "5 AI phones", "3 coding hacks"),
+    MAIN must deliver that EXACT count as separate items (First / Second / Third …).
+  - Never promise 5 and only list 3. Prefer 3–4 real items and match the number in hook/title.
+  - Pattern interrupt only when there are 4+ items, after item 2.
+
+  CAPTION / CTA ALIGNMENT:
+  - `cta` MUST be the exact final spoken sentence in `full_script` (verbatim).
+  - Do not change meaning between on-screen CTA and voice (no "life trick" vs "AI trick").
+  - One string only: the same words in `cta` and at the end of `full_script`.
+
+  LIST STRUCTURE:
+  - MAIN items: short one-liners, same pattern each item.
+  - `full_script` = hook + intro + main + outro + cta joined as natural speech.
+
 SEO TITLE RULE: seo_title is also the on-screen HOOK HEADLINE for the first ~1.5s.
 It MUST be specific, under 60 characters, include a number OR a power word
 (Secret / Nobody / Stop / Truth / Hidden / Shocking / Never), and end with or include "#Shorts".
@@ -96,6 +112,8 @@ Requirements:
 - Conflict or payoff fully clear within the first 2 seconds of speech
 - Pattern interrupt mid-video
 - LOOP-ABLE: last CTA line echoes the hook theme
+- COUNT: if hook/seo_title says N items, MAIN must list exactly N items (First…Nth)
+- CTA: `cta` must be the exact final sentence of `full_script` (same words)
 - seo_title: specific headline for the first 1.5s on-screen overlay (number or power word + "#Shorts")
 - Tags: EXACTLY 20-28 relevant tags
 - Hashtags: AT LEAST 7, including "#Shorts"
