@@ -1,27 +1,32 @@
 """Chatbot Answer Engine.
 
 Flow per question:
-  1. RAG retrieval from vector store (topic_id=studio_knowledge)
+  1. RAG retrieval from vector store (topic_id=studio_knowledge) — optional
   2. Live DB context injection
   3. LLM call (Groq → Gemini fallback via existing FallbackProvider)
   4. Stream response word-by-word via caller-supplied async callback
   5. Return sources list + low_confidence flag
-
-The LLM is instructed to include the marker __LOW_CONFIDENCE__ in its
-response when it cannot answer with certainty — the caller uses this to
-trigger the escalation path.
 """
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncGenerator, Callable, Awaitable
+from typing import Callable, Awaitable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.llm_providers.factory import get_llm_provider
 from app.llm_providers.base import LLMMessage
-from app.rag.vector_store import get_vector_store, Chunk
+
+try:
+    from app.rag.vector_store import get_vector_store, Chunk
+except ImportError:
+    get_vector_store = None  # type: ignore[assignment]
+
+    class Chunk:  # type: ignore[no-redef]
+        chunk_text: str = ""
+        source_url: str = ""
+
 from app.chatbot.context_builder import build_live_context
 from app.chatbot.knowledge_base import TOPIC_KNOWLEDGE, TOPIC_RESOLVED_QA
 
@@ -54,17 +59,16 @@ async def answer_question(
 
     Returns:
         (sources, low_confidence)
-        sources: list of dicts with {title, type}
-        low_confidence: True if answer flagged for escalation
     """
     sources: list[dict] = []
 
-    # 1. RAG retrieval
-    rag_chunks: list[Chunk] = []
+    # 1. RAG retrieval (skipped on free-tier without faiss / sentence-transformers)
+    rag_chunks: list = []
     try:
+        if get_vector_store is None:
+            raise RuntimeError("RAG vector store unavailable")
         store = get_vector_store()
         rag_chunks = await store.query(question, topic_id=TOPIC_KNOWLEDGE, k=5)
-        # Also query resolved QA namespace
         resolved_chunks = await store.query(question, topic_id=TOPIC_RESOLVED_QA, k=2)
         rag_chunks = rag_chunks + resolved_chunks
     except Exception as exc:
@@ -84,7 +88,10 @@ async def answer_question(
             f"[KB Source {i+1}: {c.source_url}]\n{c.chunk_text}"
             for i, c in enumerate(rag_chunks)
         )
-        sources = [{"title": c.source_url.split("/")[-1], "type": "knowledge_base"} for c in rag_chunks[:3]]
+        sources = [
+            {"title": c.source_url.split("/")[-1], "type": "knowledge_base"}
+            for c in rag_chunks[:3]
+        ]
 
     if live_context:
         sources.append({"title": "Live system state", "type": "database"})
@@ -95,10 +102,8 @@ async def answer_question(
     if live_context:
         context_block += f"\n\n## Live System State\n{live_context}"
 
-    # Build messages list
     messages: list[LLMMessage] = []
 
-    # Include last few history turns for context (max 6 messages = 3 turns)
     if history:
         for msg in history[-6:]:
             messages.append(LLMMessage(role=msg["role"], content=msg["content"]))
@@ -106,7 +111,6 @@ async def answer_question(
     user_content = f"Question: {question}\n{context_block}"
     messages.append(LLMMessage(role="user", content=user_content))
 
-    # 4. Call LLM
     try:
         provider = get_llm_provider()
         response = await provider.generate(
@@ -118,9 +122,11 @@ async def answer_question(
         full_text = response.content
     except Exception as exc:
         logger.error("LLM call failed in chatbot engine", error=str(exc))
-        full_text = f"I'm unable to answer right now — the language model returned an error. Please try again. __LOW_CONFIDENCE__"
+        full_text = (
+            "I'm unable to answer right now — the language model returned an error. "
+            "Please try again. __LOW_CONFIDENCE__"
+        )
 
-    # 5. Stream word by word
     low_confidence = "__LOW_CONFIDENCE__" in full_text
     display_text = full_text.replace("__LOW_CONFIDENCE__", "").strip()
 
@@ -128,7 +134,6 @@ async def answer_question(
     for i, word in enumerate(words):
         chunk = word if i == len(words) - 1 else word + " "
         await on_token(chunk)
-        # Small yield to allow other coroutines to run without adding visible delay
         if i % 8 == 0:
             await asyncio.sleep(0)
 
