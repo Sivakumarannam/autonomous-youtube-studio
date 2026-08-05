@@ -166,7 +166,9 @@ class ShortScriptAgent:
                 cta="Follow for more tips!",
                 full_script=raw,
                 word_count=word_count,
-                estimated_duration_seconds=max(15, min(60, int(word_count / self.WORDS_PER_SECOND))),
+                estimated_duration_seconds=max(
+                    15, min(60, int(word_count / self.WORDS_PER_SECOND))
+                ),
                 seo_title=topic_title[:60],
                 seo_description=topic_title,
                 tags=[],
@@ -221,8 +223,14 @@ class ShortScriptAgent:
         tags = list(data.get("tags", []))
         hashtags = list(data.get("hashtags", ["#Shorts"]))
 
-        base_keywords = [w.lower() for w in re.findall(r"\w+", topic_title) if len(w) > 2] or ["video", "content"]
-        modifiers = ["explained", "tips", "guide", "tutorial", "how to", "best", "breakdown", "summary", "viral", "trending", "review", "analysis", "top", "update", "secrets", "hacks", "facts", "new"]
+        base_keywords = [
+            w.lower() for w in re.findall(r"\w+", topic_title) if len(w) > 2
+        ] or ["video", "content"]
+        modifiers = [
+            "explained", "tips", "guide", "tutorial", "how to", "best", "breakdown",
+            "summary", "viral", "trending", "review", "analysis", "top", "update",
+            "secrets", "hacks", "facts", "new",
+        ]
 
         if len(tags) < 22:
             for mod in modifiers:
@@ -297,7 +305,7 @@ class ShortScriptAgent:
     ) -> tuple[str, str, str, str]:
         """Enforce count honesty and CTA = last spoken line.
 
-        Returns (hook, cta, full_script, seo_title) possibly adjusted.
+        Aligns on-screen hook digit with body (fixes 2-on-screen vs 3-spoken).
         """
         cta_clean = (cta or "").strip()
         fs = (full_script or "").strip()
@@ -313,20 +321,27 @@ class ShortScriptAgent:
                     logger.info("Script QA: moved cta to end of full_script")
 
         promised = self._extract_promised_count(hook, seo_title)
-        if promised is not None and promised >= 2:
-            items = self._count_main_items(main)
-            if items and items < promised:
-                logger.warning(
-                    "Script QA: hook/title promises more items than MAIN delivers",
-                    promised=promised,
-                    delivered=items,
-                )
-                seo_title = self._rewrite_count_in_title(seo_title, items)
-                hook = self._rewrite_count_in_title(hook, items)
-                logger.info(
-                    "Script QA: rewrote promised count to match MAIN",
-                    new_count=items,
-                )
+        items = self._count_main_items(main) or self._count_main_items(fs)
+        if promised is not None and promised >= 2 and items >= 2 and promised != items:
+            logger.warning(
+                "Script QA: hook/title count != body item count — aligning to body",
+                promised=promised,
+                delivered=items,
+            )
+            seo_title = self._rewrite_count_in_title(seo_title, items)
+            hook = self._rewrite_count_in_title(hook, items)
+            fs = self._rewrite_count_in_title(fs, items)
+            logger.info(
+                "Script QA: rewrote promised count to match body",
+                new_count=items,
+            )
+
+        cta_clean = self._sanitize_cta(cta_clean)
+        if cta_clean:
+            if cta_clean not in fs:
+                fs = (fs + " " + cta_clean).strip()
+            elif not fs.rstrip(".!?").endswith(cta_clean.rstrip(".!?")):
+                fs = (fs + " " + cta_clean).strip()
 
         return hook, cta_clean, fs, seo_title
 
@@ -335,7 +350,8 @@ class ShortScriptAgent:
         blob = f"{hook or ''} {seo_title or ''}"
         matches = re.findall(
             r"(?:top\s*)?(\d)\s+(?:best |new |free |secret )?(?:\w+\s+){0,2}"
-            r"(?:phones?|apps?|tips?|hacks?|tricks?|ways?|tools?|ideas?|facts?|steps?|secrets?)",
+            r"(?:phones?|apps?|tips?|hacks?|tricks?|ways?|tools?|ideas?|facts?|steps?|secrets?|"
+            r"reasons?|game\s*changers?|changes?|things?|features?|upgrades?)",
             blob,
             flags=re.I,
         )
@@ -343,7 +359,7 @@ class ShortScriptAgent:
             n = int(matches[0])
             if 2 <= n <= 9:
                 return n
-        m = re.search(r"\b([2-9])\b", (seo_title or hook or "")[:40])
+        m = re.search(r"\b([2-9])\b", (seo_title or hook or "")[:50])
         if m:
             return int(m.group(1))
         return None
@@ -374,6 +390,19 @@ class ShortScriptAgent:
             return text
         return re.sub(r"\b([2-9])\b", str(new_count), text, count=1)
 
+    @staticmethod
+    def _sanitize_cta(cta: str) -> str:
+        """Keep end-card / spoken CTA short and grammatical."""
+        c = (cta or "").strip()
+        if not c:
+            return "Follow for more"
+        low = c.lower()
+        if any(x in low for x in ("shocked you", "which change", "change shocked")):
+            return "Follow for more"
+        if len(c) > 60:
+            c = c[:57].rstrip() + "..."
+        return c
+
     def _enrich_description(
         self,
         description: str,
@@ -390,7 +419,12 @@ class ShortScriptAgent:
 
         cta_lower = cta.lower()
         desc_lower = desc.lower()
-        if cta and cta_lower not in desc_lower and "subscribe" not in desc_lower and "follow" not in desc_lower:
+        if (
+            cta
+            and cta_lower not in desc_lower
+            and "subscribe" not in desc_lower
+            and "follow" not in desc_lower
+        ):
             desc = desc.rstrip() + " " + cta.strip()
 
         if len(desc) < 100 and cta and cta not in desc:
