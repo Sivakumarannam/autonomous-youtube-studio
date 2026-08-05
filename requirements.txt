@@ -43,15 +43,16 @@ moviepy
 pillow
 numpy
 
-# ── Text-to-speech ────────────────────────────────────────────────────────────
+# ── Text-to-speech (CPU only — do NOT add onnxruntime-gpu / torch) ─────────────
 gtts
 pyttsx3
+onnxruntime>=1.17.0,<2
 kokoro-onnx
 soundfile
 pydub
 
-# ── Speech recognition / karaoke captions ─────────────────────────────────────
-# faster-whisper uses CTranslate2 (CPU int8) — ~75 MB, no GPU required.
+# ── Speech recognition (package present; skipped at runtime in LOW_RAM_MODE) ──
+# faster-whisper uses CTranslate2 (CPU int8). Do not pull torch.
 faster-whisper
 
 # ── YouTube API ───────────────────────────────────────────────────────────────
@@ -72,89 +73,7 @@ pytest
 pytest-asyncio
 pytest-cov
 
-# ── Optional: RAG research pipeline ───────────────────────────────────────────
-# NOT included here. See requirements-rag.txt.
-# Enable with: pip install torch --index-url https://download.pytorch.org/whl/cpu
-#              pip install -r requirements-rag.txt
-# Then set RAG_RESEARCH_ENABLED=true.
-aiofiles
-aiohttp
-aiosqlite
-alembic
-apscheduler
-asyncpg
-asyncpraw
-bcrypt
-beautifulsoup4
-fastapi
-faster-whisper
-google-api-python-client
-google-auth
-google-auth-httplib2
-google-auth-oauthlib
-google-genai
-gradio-client
-groq
-gtts
-httpx
-jinja2
-kokoro-onnx
-moviepy
-numpy
-passlib
-pillow
-prometheus-client
-pydantic
-pydantic-settings
-pydub
-pytest
-pytest-asyncio
-pytest-cov
-python-dotenv
-python-jose[cryptography]
-python-multipart
-pyttsx3
-requests
-slowapi
-soundfile
-sqlalchemy[asyncio]
-structlog
-tenacity
-trafilatura
-uvicorn[standard]
-websockets
-yt-dlp
-aiofiles
-aiohttp
-aiosqlite
-alembic
-apscheduler
-asyncpg
-bcrypt
-beautifulsoup4
-faiss-cpu
-fastapi
-google-genai
-groq
-gtts
-httpx
-jinja2
-numpy
-passlib
-pillow
-prometheus-client
-pydantic
-pydantic-settings
-pydub
-python-dotenv
-python-jose[cryptography]
-python-multipart
-requests
-sentence-transformers
-slowapi
-sqlalchemy[asyncio]
-structlog
-tenacity
-trafilatura
-uvicorn[standard]
-websockets
+# ── Optional RAG (NOT installed on Oracle free-tier) ───────────────────────────
+# Requires: faiss-cpu, sentence-transformers, torch (CPU wheel).
+# Install separately only if you have RAM and set RAG_RESEARCH_ENABLED=true.
+# See requirements-rag.txt if present.

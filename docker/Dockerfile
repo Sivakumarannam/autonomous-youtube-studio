@@ -13,9 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies into an isolated prefix so we can COPY them cleanly
+# Install dependencies into an isolated prefix so we can COPY them cleanly.
+# Pin CPU onnxruntime first so kokoro-onnx does not pull GPU wheels.
 COPY requirements.txt .
 RUN pip install --upgrade pip \
+    && pip install --prefix=/install --no-cache-dir "onnxruntime>=1.17.0,<2" \
     && pip install --prefix=/install --no-cache-dir -r requirements.txt
 
 # ──────────────────────────────────────────────────────────────────────────────
