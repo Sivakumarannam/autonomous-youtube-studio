@@ -25,18 +25,14 @@ class VoiceAgent:
 
     Pipeline:
       1. LLM pre-processes the script (remove markdown, expand abbreviations)
-      2. gTTS (or pyttsx3 fallback) synthesises the cleaned text to MP3
+      2. Kokoro / gTTS / pyttsx3 synthesises the cleaned text to MP3
       3. File is saved to local storage
       4. Returns VoiceAgentOutput with path and metadata
-
-    Operates at zero cost using gTTS (Google Text-to-Speech free tier).
-    Falls back to pyttsx3 (fully offline) if gTTS is unavailable.
-    Falls back to a mock silent MP3 in test environments.
     """
 
     AGENT_NAME = "VoiceAgent"
-    WORDS_PER_MINUTE_LONG = 175   # gTTS measured on Replit (~175 wpm)
-    WORDS_PER_MINUTE_SHORT = 158  # gTTS measured on Replit (~158 wpm for shorts)
+    WORDS_PER_MINUTE_LONG = 175
+    WORDS_PER_MINUTE_SHORT = 158
 
     def __init__(self, llm_provider: BaseLLMProvider) -> None:
         self._llm = llm_provider
@@ -46,7 +42,6 @@ class VoiceAgent:
         script: Script,
         voice_settings: Optional[VoiceSettings] = None,
     ) -> VoiceAgentOutput:
-        """Generate audio for a Script ORM object."""
         if voice_settings is None:
             voice_settings = VoiceSettings()
 
@@ -85,7 +80,6 @@ class VoiceAgent:
         script_type: str = "long",
         voice_settings: Optional[VoiceSettings] = None,
     ) -> VoiceAgentOutput:
-        """Synthesise raw content without a Script ORM object."""
         if voice_settings is None:
             voice_settings = VoiceSettings()
         try:
@@ -159,6 +153,7 @@ class VoiceAgent:
             return None
         try:
             from pydub import AudioSegment  # type: ignore
+
             audio = AudioSegment.from_file(str(file_path))
             return round(len(audio) / 1000, 1)
         except Exception as exc:
@@ -258,7 +253,9 @@ class VoiceAgent:
         gender = getattr(voice_settings, "gender", cfg.voice_gender)
 
         if provider in ("auto", "kokoro"):
-            result = await self._kokoro_synthesise(text, str(file_path), gender, voice_settings.speed)
+            result = await self._kokoro_synthesise(
+                text, str(file_path), gender, voice_settings.speed
+            )
             if result:
                 return "kokoro"
 
@@ -288,18 +285,18 @@ class VoiceAgent:
     ) -> bool:
         """Kokoro ONNX synthesis with optional per-sentence timings.json for low-RAM sync."""
         try:
-            from pathlib import Path
             import json
-            import subprocess
             import shutil
+            import subprocess
 
             from app.integrations.kokoro_tts import (
+                is_available,
+                pick_voice,
+                split_spoken_sentences,
                 synthesise,
                 synthesise_sentences,
-                split_spoken_sentences,
-                pick_voice,
-                is_available,
             )
+
             if not is_available():
                 return False
             voice = pick_voice(gender)
@@ -316,7 +313,9 @@ class VoiceAgent:
                     speed=speed,
                 )
             if not timings:
-                ok = await synthesise(text=text, output_path=wav_path, voice=voice, speed=speed)
+                ok = await synthesise(
+                    text=text, output_path=wav_path, voice=voice, speed=speed
+                )
                 if not ok:
                     return False
             else:
@@ -335,12 +334,21 @@ class VoiceAgent:
 
             try:
                 ffmpeg_result = subprocess.run(
-                    ["ffmpeg", "-y", "-i", wav_path, "-codec:a", "libmp3lame",
-                     "-b:a", "128k", file_path],
-                    capture_output=True, timeout=300,
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        wav_path,
+                        "-codec:a",
+                        "libmp3lame",
+                        "-b:a",
+                        "128k",
+                        file_path,
+                    ],
+                    capture_output=True,
+                    timeout=300,
                 )
                 if ffmpeg_result.returncode == 0:
-                    Path(wav_path).unlink(missing_ok=True)
                     logger.info("Kokoro TTS → MP3 conversion complete", path=file_path)
                 else:
                     logger.warning(
@@ -348,18 +356,34 @@ class VoiceAgent:
                         returncode=ffmpeg_result.returncode,
                         stderr=ffmpeg_result.stderr.decode()[:200],
                     )
-                    shutil.move(wav_path, file_path)
+                    if Path(wav_path).is_file():
+                        shutil.move(wav_path, file_path)
                 return True
             except Exception as conv_exc:
                 logger.warning("Kokoro WAV→MP3 conversion failed", error=str(conv_exc))
-                shutil.move(wav_path, file_path)
+                if Path(wav_path).is_file():
+                    shutil.move(wav_path, file_path)
                 return True
+            finally:
+                # Line L: never leave large Kokoro WAV temps on free-tier disk
+                try:
+                    p = Path(wav_path)
+                    if p.is_file():
+                        p.unlink(missing_ok=True)
+                        logger.info("Cleaned Kokoro temp WAV", path=wav_path)
+                    parent = Path(file_path).parent
+                    stem = Path(file_path).stem
+                    for leftover in parent.glob(f"{stem}*_kokoro.wav"):
+                        leftover.unlink(missing_ok=True)
+                except Exception as clean_exc:
+                    logger.debug("Kokoro temp cleanup skipped", error=str(clean_exc))
         except Exception as exc:
             logger.debug("Kokoro synthesis skipped", error=str(exc))
             return False
 
     def _gtts_synthesise(self, text: str, file_path: str, language: str) -> bool:
         import time as _time
+
         try:
             from gtts import gTTS
         except ImportError:
@@ -390,6 +414,7 @@ class VoiceAgent:
     def _pyttsx3_synthesise(self, text: str, file_path: str) -> bool:
         try:
             import pyttsx3
+
             engine = pyttsx3.init()
             engine.save_to_file(text, file_path)
             engine.runAndWait()
