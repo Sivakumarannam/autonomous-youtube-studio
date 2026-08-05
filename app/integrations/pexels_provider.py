@@ -1,5 +1,5 @@
 """
-Pexels free stock photo / video provider.
+Pexels free stock photo/video provider.
 
 Requires PEXELS_API_KEY in settings.
 """
@@ -32,7 +32,7 @@ def _cache_path(query: str, kind: str) -> Path:
     base = Path(settings.storage_local_path) / "images" / "pexels"
     base.mkdir(parents=True, exist_ok=True)
     slug = hashlib.md5(f"{kind}:{query}".encode()).hexdigest()[:12]
-    return base / f"{slug}.jpg"
+    return base / f"{kind}_{slug}.jpg"
 
 
 async def search_photo(
@@ -41,16 +41,15 @@ async def search_photo(
 ) -> Optional[str]:
     """
     Search Pexels for a photo matching `query`.
-    Returns a direct image URL or None.
+    Returns the best-match photo URL, or None.
     """
-    key = _api_key()
-    if not key:
+    if not is_configured():
         return None
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.get(
                 _PEXELS_PHOTO_URL,
-                headers={"Authorization": key},
+                headers={"Authorization": _api_key()},
                 params={
                     "query": query,
                     "orientation": orientation,
@@ -63,13 +62,10 @@ async def search_photo(
             if not photos:
                 logger.debug("Pexels: no photos found", query=query)
                 return None
+            # Prefer medium/large src
             src = photos[0].get("src") or {}
-            url = src.get("large") or src.get("original") or src.get("medium")
-            logger.info(
-                "Pexels photo found",
-                query=query,
-                url=(url or "")[:60],
-            )
+            url = src.get("large") or src.get("medium") or src.get("original")
+            logger.debug("Pexels photo found", query=query, url=(url or "")[:60])
             return url
     except Exception as exc:
         logger.warning("Pexels photo search failed", query=query, error=str(exc))
@@ -79,7 +75,7 @@ async def search_photo(
 async def download_photo(query: str, orientation: str = "portrait") -> Optional[str]:
     """
     Search and download a Pexels photo for `query`.
-    Returns local file path or None.
+    Returns local file path, or None.
     Cached by query — same query returns same file immediately.
     """
     cache = _cache_path(query, "photo")
@@ -107,16 +103,15 @@ async def search_video(
 ) -> Optional[str]:
     """
     Search Pexels for a video matching `query`.
-    Returns a downloadable video file URL or None.
+    Returns a video file URL, or None.
     """
-    key = _api_key()
-    if not key:
+    if not is_configured():
         return None
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.get(
                 _PEXELS_VIDEO_URL,
-                headers={"Authorization": key},
+                headers={"Authorization": _api_key()},
                 params={
                     "query": query,
                     "orientation": orientation,
@@ -129,14 +124,9 @@ async def search_video(
             if not videos:
                 return None
             files = videos[0].get("video_files") or []
-            # Prefer mid-quality mp4
-            url = None
-            for f in files:
-                if f.get("file_type") == "video/mp4" and f.get("width", 0) >= 720:
-                    url = f.get("link")
-                    break
-            if not url and files:
-                url = files[0].get("link")
+            # Prefer mid quality
+            files_sorted = sorted(files, key=lambda f: abs((f.get("width") or 0) - 720))
+            url = files_sorted[0].get("link") if files_sorted else None
             logger.info("Pexels video found", query=query, url=(url or "")[:60])
             return url
     except Exception as exc:
@@ -145,16 +135,10 @@ async def search_video(
 
 
 def extract_visual_keywords(narration: str) -> str:
-    """
-    Extract concrete visual keywords from a narration sentence for stock search.
-
-    Prefer domain anchors (EV, solar, phone, etc.) and drop abstract/commercial
-    words that cause off-topic Pexels hits (price tags, sale signs).
-    """
+    """Concrete visual keywords for Pexels (avoid abstract / commercial junk)."""
     import re
 
     text = re.sub(r"[^\w\s]", " ", (narration or "").lower())
-
     stop_words = {
         "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
         "have", "has", "had", "do", "does", "did", "will", "would", "could",
