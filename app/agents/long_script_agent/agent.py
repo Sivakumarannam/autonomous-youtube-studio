@@ -135,9 +135,6 @@ class LongScriptAgent:
 
         output = self._parse_response(response, topic_title)
 
-        # --- MINIMUM WORD COUNT ENFORCEMENT ---
-        # gTTS on Replit speaks at ~175 wpm; 1050 words ≈ 6 min, 1400 words ≈ 8 min.
-        # If the LLM came up short, issue one expansion pass against the full_script.
         if output.word_count < self.TARGET_MIN_WORDS:
             shortfall = self.TARGET_MIN_WORDS - output.word_count
             logger.warning(
@@ -207,7 +204,6 @@ class LongScriptAgent:
                 thumbnail_concept="",
             )
 
-        # Parse sections
         raw_sections = data.get("sections", [])
         sections: list[ScriptSection] = []
         for s in raw_sections:
@@ -233,40 +229,47 @@ class LongScriptAgent:
         word_count = len(full_script.split())
         duration = int(word_count / self.WORDS_PER_SECOND)
 
-        # --- DETERMINISTIC SEO PADDING ---
         tags = list(data.get("tags", []))
         hashtags = list(data.get("hashtags", []))
-        
-        base_keywords = [w.lower() for w in re.findall(r'\w+', topic_title) if len(w) > 2] or ["video", "content"]
-        modifiers = ["explained", "tips", "guide", "tutorial", "how to", "best", "breakdown", "summary", "viral", "trending", "review", "analysis", "top", "update", "secrets", "hacks", "facts", "new"]
-        
-        # Pad tags up to 22
+
+        base_keywords = [w.lower() for w in re.findall(r"\w+", topic_title) if len(w) > 2] or ["video", "content"]
+        modifiers = [
+            "explained", "tips", "guide", "tutorial", "how to", "best", "breakdown",
+            "summary", "viral", "trending", "review", "analysis", "top", "update",
+            "secrets", "hacks", "facts", "new",
+        ]
+
         if len(tags) < 22:
             for mod in modifiers:
                 for kw in base_keywords:
                     new_tag = f"{kw} {mod}"
                     if new_tag not in tags:
                         tags.append(new_tag)
-                    if len(tags) >= 22: break
-                if len(tags) >= 22: break
-            while len(tags) < 22: tags.append(f"{base_keywords[0]} info {len(tags)}")
+                    if len(tags) >= 22:
+                        break
+                if len(tags) >= 22:
+                    break
+            while len(tags) < 22:
+                tags.append(f"{base_keywords[0]} info {len(tags)}")
 
-        # Pad hashtags up to 8
         if len(hashtags) < 8:
             for kw in base_keywords:
                 new_ht = f"#{kw.capitalize()}"
-                if new_ht not in hashtags: hashtags.append(new_ht)
-                if len(hashtags) >= 8: break
+                if new_ht not in hashtags:
+                    hashtags.append(new_ht)
+                if len(hashtags) >= 8:
+                    break
             for mod in modifiers:
                 new_ht = f"#{mod.capitalize()}"
-                if new_ht not in hashtags: hashtags.append(new_ht)
-                if len(hashtags) >= 8: break
-            while len(hashtags) < 8: hashtags.append(f"#Topic{len(hashtags)}")
-        # ---------------------------------
+                if new_ht not in hashtags:
+                    hashtags.append(new_ht)
+                if len(hashtags) >= 8:
+                    break
+            while len(hashtags) < 8:
+                hashtags.append(f"#Topic{len(hashtags)}")
 
         cta_text = str(data.get("cta", "Like, subscribe, and comment below!"))
 
-        # Parse chapter timestamps (new field) — build a fallback from sections
         raw_chapters = data.get("chapter_timestamps", [])
         chapter_timestamps: list[ChapterTimestamp] = []
         if isinstance(raw_chapters, list) and raw_chapters:
@@ -278,10 +281,9 @@ class LongScriptAgent:
                             title=str(ch.get("title", "")),
                         )
                     )
-        # If LLM didn't return chapters, generate them from section list
         if not chapter_timestamps and sections:
             chapter_timestamps.append(ChapterTimestamp(time="00:00", title="Introduction"))
-            elapsed = 90  # ~90s intro
+            elapsed = 90
             for sec in sections:
                 mins, secs = divmod(elapsed, 60)
                 chapter_timestamps.append(
@@ -289,14 +291,13 @@ class LongScriptAgent:
                 )
                 elapsed += sec.duration_seconds
             mins, secs = divmod(elapsed, 60)
-            chapter_timestamps.append(ChapterTimestamp(time=f"{mins:02d}:{secs:02d}", title="Conclusion"))
+            chapter_timestamps.append(
+                ChapterTimestamp(time=f"{mins:02d}:{secs:02d}", title="Conclusion")
+            )
 
-        # Build chapter block to append to description
         chapter_block = ""
         if chapter_timestamps:
-            chapter_lines = "\n".join(
-                f"{ch.time} {ch.title}" for ch in chapter_timestamps
-            )
+            chapter_lines = "\n".join(f"{ch.time} {ch.title}" for ch in chapter_timestamps)
             chapter_block = f"\n\n⏱ Chapters:\n{chapter_lines}"
 
         seo_description = self._enrich_description(
@@ -304,9 +305,24 @@ class LongScriptAgent:
             hashtags=hashtags,
             cta=cta_text,
         )
-        # Append chapter timestamps to description
         if chapter_block:
             seo_description = seo_description + chapter_block
+
+        hook_text = str(data.get("hook", "") or "")
+        seo_title_text = str(data.get("seo_title", topic_title[:70]) or topic_title[:70])
+        main_parts = []
+        for s in (sections or []):
+            main_parts.append(str(getattr(s, "title", "") or ""))
+            main_parts.append(str(getattr(s, "content", "") or ""))
+        main_blob = "\n".join(main_parts) if main_parts else full_script
+        hook_text, cta_text, full_script, seo_title_text = self._apply_script_qa(
+            hook=hook_text,
+            main=main_blob,
+            cta=cta_text,
+            full_script=full_script,
+            seo_title=seo_title_text,
+        )
+        word_count = len(full_script.split())
 
         return LongScriptAgentOutput(
             introduction=str(data.get("introduction", "")),
@@ -315,15 +331,111 @@ class LongScriptAgent:
             cta=cta_text,
             full_script=full_script,
             word_count=data.get("word_count", word_count),
-            estimated_duration_seconds=max(490, int(data.get("estimated_duration_seconds", duration))),
-            hook=str(data.get("hook", "")),
-            seo_title=str(data.get("seo_title", topic_title[:70])),
+            estimated_duration_seconds=max(
+                490, int(data.get("estimated_duration_seconds", duration))
+            ),
+            hook=hook_text,
+            seo_title=seo_title_text,
             seo_description=seo_description,
             tags=tags,
             hashtags=hashtags,
             thumbnail_concept=str(data.get("thumbnail_concept", "")),
             chapter_timestamps=chapter_timestamps,
         )
+
+    def _apply_script_qa(
+        self,
+        hook: str,
+        main: str,
+        cta: str,
+        full_script: str,
+        seo_title: str,
+    ) -> tuple[str, str, str, str]:
+        """Enforce count honesty and CTA = last spoken line (same rules as Short)."""
+        cta_clean = (cta or "").strip()
+        fs = (full_script or "").strip()
+        if cta_clean:
+            if cta_clean not in fs:
+                fs = (fs + "\n\n" + cta_clean).strip()
+                logger.info("Long Script QA: appended cta onto full_script")
+            else:
+                if not fs.rstrip(".!?").endswith(cta_clean.rstrip(".!?")):
+                    fs_wo = fs.replace(cta_clean, " ").strip()
+                    fs_wo = re.sub(r"\s{2,}", " ", fs_wo)
+                    fs = (fs_wo + "\n\n" + cta_clean).strip()
+                    logger.info("Long Script QA: moved cta to end of full_script")
+
+        promised = self._extract_promised_count(hook, seo_title)
+        if promised is not None and promised >= 2:
+            items = self._count_main_items(main)
+            if items and items < promised:
+                logger.warning(
+                    "Long Script QA: hook/title promises more items than body delivers",
+                    promised=promised,
+                    delivered=items,
+                )
+                seo_title = self._rewrite_count_in_title(seo_title, items)
+                hook = self._rewrite_count_in_title(hook, items)
+                logger.info(
+                    "Long Script QA: rewrote promised count to match body",
+                    new_count=items,
+                )
+
+        return hook, cta_clean, fs, seo_title
+
+    @staticmethod
+    def _extract_promised_count(hook: str, seo_title: str) -> int | None:
+        blob = f"{hook or ''} {seo_title or ''}"
+        matches = re.findall(
+            r"(?:top\s*)?(\d)\s+(?:best |new |free |secret )?(?:\w+\s+){0,2}"
+            r"(?:phones?|apps?|tips?|hacks?|tricks?|ways?|tools?|ideas?|facts?|steps?|secrets?|reasons?)",
+            blob,
+            flags=re.I,
+        )
+        if matches:
+            n = int(matches[0])
+            if 2 <= n <= 9:
+                return n
+        m = re.search(r"\b([2-9])\b", (seo_title or hook or "")[:50])
+        if m:
+            return int(m.group(1))
+        return None
+
+    @staticmethod
+    def _count_main_items(main: str) -> int:
+        if not main:
+            return 0
+        ordinals = re.findall(
+            r"(?:^|\n)\s*(?:\d+[.)]|[-*]\s+|step\s+\d+|tip\s+#?\d+)",
+            main,
+            flags=re.I,
+        )
+        if len(ordinals) >= 2:
+            return len(ordinals)
+        nums = re.findall(
+            r"\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)\b",
+            main,
+            flags=re.I,
+        )
+        if len(nums) >= 2:
+            return len(nums)
+        return 0
+
+    @staticmethod
+    def _rewrite_count_in_title(text: str, new_count: int) -> str:
+        if not text:
+            return text
+        rewritten = re.sub(
+            r"\b([2-9]|10)\b(?=\s+(?:best |new |free |secret )?(?:\w+\s+){0,2}"
+            r"(?:phones?|apps?|tips?|hacks?|tricks?|ways?|tools?|ideas?|facts?|steps?|secrets?|reasons?))",
+            str(new_count),
+            text,
+            count=1,
+            flags=re.I,
+        )
+        if rewritten != text:
+            return rewritten
+        return re.sub(r"\b([2-9]|10)\b", str(new_count), text, count=1)
 
     def _enrich_description(
         self,
@@ -340,20 +452,17 @@ class LongScriptAgent:
         """
         desc = description.strip()
 
-        # 1. Embed hashtags inline if not already present
         existing_inline = set(re.findall(r"#\w+", desc))
         missing = [h for h in hashtags if h not in existing_inline]
         needed = max(0, 7 - len(existing_inline))
         if needed > 0 and missing:
             desc = desc.rstrip() + " " + " ".join(missing[:needed])
 
-        # 2. Append CTA if no recognisable call-to-action is present
         cta_lower = cta.lower()
         desc_lower = desc.lower()
         if cta and cta_lower not in desc_lower and "subscribe" not in desc_lower and "follow" not in desc_lower:
             desc = desc.rstrip() + " " + cta.strip()
 
-        # 3. Pad to minimum 100 chars
         if len(desc) < 100 and cta and cta not in desc:
             desc = desc.rstrip() + " " + cta.strip()
 
