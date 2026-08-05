@@ -3,36 +3,39 @@ Embeddings — Item 4 of Phase 4 RAG Research.
 
 Thin async wrapper around sentence-transformers all-MiniLM-L6-v2.
 
-Why all-MiniLM-L6-v2:
-  - 22 M parameters, ~80 MB download — fits comfortably on i5-1135G7 with 15.7 GB RAM
-  - Dim 384 — fast FAISS search
-  - Vectors are L2-normalised so inner-product == cosine similarity
-
-Model is loaded once (lazy, module-level) and reused across all calls.
-Encoding runs in asyncio's default thread-pool executor so the event loop
-is never blocked by CPU-bound work.
+Optional on Oracle free-tier: if sentence-transformers is not installed
+(avoids pulling torch/CUDA), encode() raises RuntimeError and callers
+(RAG path) catch and continue without vector search.
 """
 from __future__ import annotations
 
 import asyncio
 import functools
 
-from sentence_transformers import SentenceTransformer
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:  # optional — not installed on free-tier CPU image
+    SentenceTransformer = None  # type: ignore[misc, assignment]
 
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
 _MODEL_NAME = "all-MiniLM-L6-v2"
-_model: SentenceTransformer | None = None
+_model = None  # type: ignore[var-annotated]
 
 # Public constant so vector_store.py can create the right FAISS index dimension.
 EMBEDDING_DIM = 384
 
 
-def _load_model() -> SentenceTransformer:
+def _load_model():
     """Load (or return cached) SentenceTransformer model."""
     global _model
+    if SentenceTransformer is None:
+        raise RuntimeError(
+            "sentence-transformers not installed — RAG embeddings disabled "
+            "(expected on Oracle free-tier CPU image)"
+        )
     if _model is None:
         logger.info("Loading embedding model", model=_MODEL_NAME)
         _model = SentenceTransformer(_MODEL_NAME)
