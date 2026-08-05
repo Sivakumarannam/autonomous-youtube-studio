@@ -1,40 +1,27 @@
 """
-Pexels Stock Media Provider — free stock photos and videos.
+Pexels free stock photo / video provider.
 
-Free API with 200 requests/hour, 20,000/month.
-Sign up at https://www.pexels.com/api/ to get a free API key.
-
-Configure via environment variable:
-    PEXELS_API_KEY=your_key_here
-
-Usage:
-    photo_url = await PexelsProvider.search_photo("didgeridoo musical instrument")
-    video_url = await PexelsProvider.search_video("ocean waves")
+Requires PEXELS_API_KEY in settings.
 """
-
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import os
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote
 
 import httpx
 
+from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
 _PEXELS_PHOTO_URL = "https://api.pexels.com/v1/search"
 _PEXELS_VIDEO_URL = "https://api.pexels.com/videos/search"
-_TIMEOUT = 20.0
-_CACHE_DIR = Path("./storage/cache/pexels")
 
 
 def _api_key() -> str:
-    return os.environ.get("PEXELS_API_KEY", "")
+    return (settings.pexels_api_key or "").strip()
 
 
 def is_configured() -> bool:
@@ -42,57 +29,48 @@ def is_configured() -> bool:
 
 
 def _cache_path(query: str, kind: str) -> Path:
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    base = Path(settings.storage_local_path) / "images" / "pexels"
+    base.mkdir(parents=True, exist_ok=True)
     slug = hashlib.md5(f"{kind}:{query}".encode()).hexdigest()[:12]
-    return _CACHE_DIR / f"{slug}.{'mp4' if kind == 'video' else 'jpg'}"
+    return base / f"{slug}.jpg"
 
 
 async def search_photo(
     query: str,
     orientation: str = "portrait",
-    per_page: int = 5,
 ) -> Optional[str]:
     """
     Search Pexels for a photo matching `query`.
-
-    Returns the URL of the best matching photo (landscape or portrait),
-    or None if the API is not configured or no results were found.
+    Returns a direct image URL or None.
     """
     key = _api_key()
     if not key:
         return None
-
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.get(
                 _PEXELS_PHOTO_URL,
                 headers={"Authorization": key},
                 params={
                     "query": query,
                     "orientation": orientation,
-                    "per_page": per_page,
-                    "size": "large",
+                    "per_page": 5,
                 },
             )
             resp.raise_for_status()
             data = resp.json()
-
-        photos = data.get("photos", [])
-        if not photos:
-            logger.debug("Pexels: no photos found", query=query)
-            return None
-
-        # Pick best photo: prefer portrait for Shorts, landscape for long
-        photo = photos[0]
-        src = photo.get("src", {})
-        url = src.get("large2x") or src.get("large") or src.get("original")
-        logger.info(
-            "Pexels photo found",
-            query=query,
-            photographer=photo.get("photographer", "unknown"),
-            url=url[:60] if url else "",
-        )
-        return url
+            photos = data.get("photos") or []
+            if not photos:
+                logger.debug("Pexels: no photos found", query=query)
+                return None
+            src = photos[0].get("src") or {}
+            url = src.get("large") or src.get("original") or src.get("medium")
+            logger.info(
+                "Pexels photo found",
+                query=query,
+                url=(url or "")[:60],
+            )
+            return url
     except Exception as exc:
         logger.warning("Pexels photo search failed", query=query, error=str(exc))
         return None
@@ -101,8 +79,7 @@ async def search_photo(
 async def download_photo(query: str, orientation: str = "portrait") -> Optional[str]:
     """
     Search and download a Pexels photo for `query`.
-
-    Returns the local file path, or None on failure.
+    Returns local file path or None.
     Cached by query — same query returns same file immediately.
     """
     cache = _cache_path(query, "photo")
@@ -110,11 +87,10 @@ async def download_photo(query: str, orientation: str = "portrait") -> Optional[
         return str(cache)
 
     url = await search_photo(query, orientation=orientation)
-    if url is None:
+    if not url:
         return None
-
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             cache.write_bytes(resp.content)
@@ -128,49 +104,41 @@ async def download_photo(query: str, orientation: str = "portrait") -> Optional[
 async def search_video(
     query: str,
     orientation: str = "portrait",
-    per_page: int = 3,
 ) -> Optional[str]:
     """
     Search Pexels for a video matching `query`.
-
-    Returns the URL of the best matching video file (HD), or None.
+    Returns a downloadable video file URL or None.
     """
     key = _api_key()
     if not key:
         return None
-
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.get(
                 _PEXELS_VIDEO_URL,
                 headers={"Authorization": key},
                 params={
                     "query": query,
                     "orientation": orientation,
-                    "per_page": per_page,
-                    "size": "medium",
+                    "per_page": 3,
                 },
             )
             resp.raise_for_status()
             data = resp.json()
-
-        videos = data.get("videos", [])
-        if not videos:
-            return None
-
-        video = videos[0]
-        # Pick best quality file: prefer HD (1280x720 or better)
-        files = sorted(
-            video.get("video_files", []),
-            key=lambda f: f.get("width", 0),
-            reverse=True,
-        )
-        url = next(
-            (f["link"] for f in files if f.get("width", 0) >= 720),
-            files[0]["link"] if files else None,
-        )
-        logger.info("Pexels video found", query=query, url=(url or "")[:60])
-        return url
+            videos = data.get("videos") or []
+            if not videos:
+                return None
+            files = videos[0].get("video_files") or []
+            # Prefer mid-quality mp4
+            url = None
+            for f in files:
+                if f.get("file_type") == "video/mp4" and f.get("width", 0) >= 720:
+                    url = f.get("link")
+                    break
+            if not url and files:
+                url = files[0].get("link")
+            logger.info("Pexels video found", query=query, url=(url or "")[:60])
+            return url
     except Exception as exc:
         logger.warning("Pexels video search failed", query=query, error=str(exc))
         return None
@@ -180,15 +148,13 @@ def extract_visual_keywords(narration: str) -> str:
     """
     Extract concrete visual keywords from a narration sentence for stock search.
 
-    Strategy: remove filler words and abstract terms, keep nouns, places,
-    actions, and objects.  Simple heuristic — good enough for Pexels queries.
+    Prefer domain anchors (EV, solar, phone, etc.) and drop abstract/commercial
+    words that cause off-topic Pexels hits (price tags, sale signs).
     """
     import re
 
-    # Strip punctuation for processing
-    text = re.sub(r"[^\w\s]", " ", narration.lower())
+    text = re.sub(r"[^\w\s]", " ", (narration or "").lower())
 
-    # Common filler / abstract words to skip
     stop_words = {
         "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
         "have", "has", "had", "do", "does", "did", "will", "would", "could",
@@ -200,10 +166,35 @@ def extract_visual_keywords(narration: str) -> str:
         "this", "these", "those", "it", "its", "so", "as", "how", "what",
         "when", "where", "which", "who", "why", "your", "our", "their", "you",
         "we", "they", "he", "she", "i", "me", "him", "her", "us", "them",
-        "know", "did", "just", "very", "really", "more", "most", "also",
-        "well", "even", "back", "any", "first", "than", "now", "only",
+        "know", "just", "very", "really", "more", "most", "also", "well",
+        "even", "back", "any", "first", "second", "third", "fourth", "fifth",
+        "than", "now", "only", "number", "nobody", "expects", "coming",
+        "changing", "everything", "follow", "daily", "updates", "shocked",
+        "change", "special", "price", "sale", "deal", "today", "discount",
+        "offer", "secret", "shocking", "amazing", "best", "top", "new",
+        "game", "changer", "changers",
     }
 
+    anchors = [
+        ("electric car", "electric car vehicle"),
+        ("ev ", "electric vehicle charging"),
+        ("charging", "ev fast charging station"),
+        ("battery", "electric car battery"),
+        ("solar roof", "solar roof panels car"),
+        ("solar", "solar panels on car roof"),
+        ("range", "electric car highway driving"),
+        ("miles", "electric vehicle road trip"),
+        ("smartphone", "modern smartphone"),
+        ("phone", "smartphone device"),
+        ("chatgpt", "laptop coding ai"),
+        ("coding", "software developer laptop"),
+        ("ai ", "artificial intelligence technology"),
+    ]
+    for needle, query in anchors:
+        if needle in text:
+            return query
+
     tokens = [w for w in text.split() if w not in stop_words and len(w) > 2]
-    # Take first 4 meaningful tokens as the search query
-    return " ".join(tokens[:4]) if tokens else narration[:50]
+    if len(tokens) > 4:
+        tokens = tokens[-4:]
+    return " ".join(tokens[:4]) if tokens else "technology product"
