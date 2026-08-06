@@ -103,10 +103,11 @@ class UploadRepository(BaseRepository[Upload]):
         youtube_video_id: str,
         youtube_url: str | None = None,
     ) -> Upload:
+        # Note: PublishStatus has no PUBLISHED member (draft|approved|scheduled|rejected).
+        # Live state is UploadStatus.PUBLISHED + youtube_video_id.
         return await self.update(
             upload,
             status=UploadStatus.PUBLISHED,
-            publish_status=PublishStatus.PUBLISHED,
             youtube_video_id=youtube_video_id,
             youtube_url=youtube_url,
             published_at=datetime.now(timezone.utc),
@@ -162,7 +163,7 @@ class UploadRepository(BaseRepository[Upload]):
         return list(result.scalars().all())
 
     async def get_dashboard_videos(self, limit: int = 20) -> list[Upload]:
-        """Scheduled (not yet on YT) + published / has youtube_id."""
+        """Pending schedule (no YT id) + live rows (status published or has youtube_id)."""
         opts = selectinload(Upload.video).selectinload(Video.script)
 
         scheduled = await self.session.execute(
@@ -187,7 +188,6 @@ class UploadRepository(BaseRepository[Upload]):
                 or_(
                     Upload.status == UploadStatus.PUBLISHED,
                     Upload.youtube_video_id.isnot(None),
-                    Upload.publish_status == PublishStatus.PUBLISHED,
                 )
             )
             .order_by(Upload.published_at.desc().nulls_last())
