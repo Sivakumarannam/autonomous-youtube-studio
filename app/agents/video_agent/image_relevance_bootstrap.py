@@ -63,8 +63,10 @@ def apply_image_relevance_patch() -> None:
 
                 visual_prompt = (
                     f"Photorealistic scene illustrating: {prompt}. "
+                    f"Relevant real-world subject matching the narration. "
                     f"No text, no watermark, no price tags, no sale signs, "
-                    f"no logos, no faces close-up unless required."
+                    f"no logos, no stock photo watermarks, "
+                    f"no faces close-up unless the topic requires a person."
                 )
                 enhanced = enhance_prompt(visual_prompt)
 

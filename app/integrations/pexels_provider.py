@@ -39,10 +39,7 @@ async def search_photo(
     query: str,
     orientation: str = "portrait",
 ) -> Optional[str]:
-    """
-    Search Pexels for a photo matching `query`.
-    Returns the best-match photo URL, or None.
-    """
+    """Search Pexels for a photo matching `query`. Returns best-match URL or None."""
     if not is_configured():
         return None
     try:
@@ -62,7 +59,6 @@ async def search_photo(
             if not photos:
                 logger.debug("Pexels: no photos found", query=query)
                 return None
-            # Prefer medium/large src
             src = photos[0].get("src") or {}
             url = src.get("large") or src.get("medium") or src.get("original")
             logger.debug("Pexels photo found", query=query, url=(url or "")[:60])
@@ -73,11 +69,7 @@ async def search_photo(
 
 
 async def download_photo(query: str, orientation: str = "portrait") -> Optional[str]:
-    """
-    Search and download a Pexels photo for `query`.
-    Returns local file path, or None.
-    Cached by query — same query returns same file immediately.
-    """
+    """Search and download a Pexels photo. Cached by query."""
     cache = _cache_path(query, "photo")
     if cache.exists() and cache.stat().st_size > 1000:
         return str(cache)
@@ -101,10 +93,7 @@ async def search_video(
     query: str,
     orientation: str = "portrait",
 ) -> Optional[str]:
-    """
-    Search Pexels for a video matching `query`.
-    Returns a video file URL, or None.
-    """
+    """Search Pexels for a video matching `query`. Returns a video file URL or None."""
     if not is_configured():
         return None
     try:
@@ -124,7 +113,6 @@ async def search_video(
             if not videos:
                 return None
             files = videos[0].get("video_files") or []
-            # Prefer mid quality
             files_sorted = sorted(files, key=lambda f: abs((f.get("width") or 0) - 720))
             url = files_sorted[0].get("link") if files_sorted else None
             logger.info("Pexels video found", query=query, url=(url or "")[:60])
@@ -157,22 +145,49 @@ def extract_visual_keywords(narration: str) -> str:
         "change", "special", "price", "sale", "deal", "today", "discount",
         "offer", "secret", "shocking", "amazing", "best", "top", "new",
         "game", "changer", "changers",
+        "subscribe", "comment", "like", "share", "link", "bio",
+        "watch", "next", "video", "shorts", "youtube",
     }
 
     anchors = [
         ("electric car", "electric car vehicle"),
+        ("electric vehicle", "electric vehicle road"),
         ("ev ", "electric vehicle charging"),
         ("charging", "ev fast charging station"),
-        ("battery", "electric car battery"),
-        ("solar roof", "solar roof panels car"),
-        ("solar", "solar panels on car roof"),
+        ("battery", "electric car battery pack"),
+        ("solar roof", "solar panels on car roof"),
+        ("solar", "solar panels rooftop"),
         ("range", "electric car highway driving"),
         ("miles", "electric vehicle road trip"),
-        ("smartphone", "modern smartphone"),
-        ("phone", "smartphone device"),
-        ("chatgpt", "laptop coding ai"),
-        ("coding", "software developer laptop"),
+        ("self driving", "autonomous car sensors"),
+        ("autonomous", "self driving car road"),
+        ("smartphone", "modern smartphone device"),
+        ("iphone", "iphone smartphone"),
+        ("android", "android smartphone"),
+        ("phone", "smartphone device close up"),
+        ("foldable", "foldable smartphone"),
+        ("chatgpt", "laptop coding artificial intelligence"),
+        ("coding", "software developer laptop code"),
+        ("programmer", "programmer coding screen"),
         ("ai ", "artificial intelligence technology"),
+        ("robot", "humanoid robot technology"),
+        ("machine learning", "data science computer screen"),
+        ("rocket", "rocket launch space"),
+        ("nasa", "space rocket launch"),
+        ("mars", "mars planet surface"),
+        ("satellite", "satellite orbit earth"),
+        ("stock market", "stock market trading screen"),
+        ("crypto", "cryptocurrency blockchain concept"),
+        ("bitcoin", "bitcoin digital currency"),
+        ("bank", "modern bank building"),
+        ("workout", "person gym workout"),
+        ("fitness", "fitness training gym"),
+        ("meditation", "meditation calm person"),
+        ("laptop", "laptop computer desk"),
+        ("data center", "server room data center"),
+        ("cloud", "cloud computing servers"),
+        ("chip", "computer microchip close up"),
+        ("semiconductor", "semiconductor wafer factory"),
     ]
     for needle, query in anchors:
         if needle in text:
