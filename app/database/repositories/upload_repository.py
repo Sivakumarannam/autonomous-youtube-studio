@@ -163,25 +163,39 @@ class UploadRepository(BaseRepository[Upload]):
         return list(result.scalars().all())
 
     async def get_dashboard_videos(self, limit: int = 20) -> list[Upload]:
-        """Published + scheduled uploads for the dashboard panel.
+        """Published + truly-pending scheduled uploads for the dashboard.
 
-        Shows when scheduled videos will go live; published rows show published_at.
-        Ordered: scheduled first (soonest), then published (newest first).
+        Scheduled rows that already have a YouTube ID are treated as published
+        (stuck publish_status healed in the UI query).
         """
         opts = selectinload(Upload.video).selectinload(Video.script)
 
         scheduled = await self.session.execute(
             select(Upload)
             .options(opts)
-            .where(Upload.publish_status == PublishStatus.SCHEDULED)
+            .where(
+                and_(
+                    Upload.publish_status == PublishStatus.SCHEDULED,
+                    Upload.youtube_video_id.is_(None),
+                    Upload.status.notin_(
+                        [UploadStatus.PUBLISHED, UploadStatus.UPLOADING]
+                    ),
+                )
+            )
             .order_by(Upload.scheduled_at.asc().nulls_last())
             .limit(limit)
         )
         published = await self.session.execute(
             select(Upload)
             .options(opts)
-            .where(Upload.status == UploadStatus.PUBLISHED)
-            .order_by(Upload.published_at.desc())
+            .where(
+                and_(
+                    Upload.youtube_video_id.isnot(None)
+                    | (Upload.status == UploadStatus.PUBLISHED)
+                    | (Upload.publish_status == PublishStatus.PUBLISHED)
+                )
+            )
+            .order_by(Upload.published_at.desc().nulls_last())
             .limit(limit)
         )
         seen: set[str] = set()

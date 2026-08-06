@@ -32,14 +32,30 @@
                 <div class="video-meta">
                   <span class="video-id">{{ upload.youtube_video_id or '—' }}</span>
                   <span class="separator">•</span>
-                  <span class="video-status">{% if upload.publish_status %}{{ upload.publish_status.value }}{% else %}{{ upload.status.name }}{% endif %}</span>
+                  <span class="video-status">{% if upload.youtube_video_id or (upload.status and upload.status.name == 'PUBLISHED') %}published{% elif upload.publish_status %}{{ upload.publish_status.value }}{% else %}{{ upload.status.name }}{% endif %}</span>
                 </div>
               </div>
             </td>
             <td>
               <div class="timestamp-cell">
                 {% set ps = upload.publish_status.value if upload.publish_status else '' %}
-                {% if ps == 'scheduled' and upload.scheduled_at %}
+                {% set is_live = upload.youtube_video_id or (upload.status and upload.status.name == 'PUBLISHED') or upload.published_at %}
+                {% if is_live %}
+                  <div class="timestamp" title="{{ upload.published_at or upload.scheduled_at }}">
+                    {% if upload.published_at %}
+                      {{ upload.published_at.strftime('%b %d, %H:%M') }}
+                    {% else %}
+                      Live on YouTube
+                    {% endif %}
+                  </div>
+                  <div class="time-ago">
+                    {% if upload.published_at %}
+                      {{ (now - upload.published_at).total_seconds() | int | humanize_time }}
+                    {% else %}
+                      already published
+                    {% endif %}
+                  </div>
+                {% elif ps == 'scheduled' and upload.scheduled_at %}
                   <div class="timestamp scheduled" title="UTC {{ upload.scheduled_at }}">
                     Goes live: {{ upload.scheduled_at.strftime('%b %d, %H:%M') }} UTC
                   </div>
@@ -51,11 +67,6 @@
                       due now (publisher will pick up)
                     {% endif %}
                   </div>
-                {% elif upload.published_at %}
-                  <div class="timestamp" title="{{ upload.published_at }}">
-                    {{ upload.published_at.strftime('%b %d, %H:%M') }}
-                  </div>
-                  <div class="time-ago">{{ (now - upload.published_at).total_seconds() | int | humanize_time }}</div>
                 {% else %}
                   <div class="timestamp">—</div>
                   <div class="time-ago">{{ upload.status.name if upload.status else 'pending' }}</div>
