@@ -1,200 +1,109 @@
-"""
-Background Music Provider — free music for video backgrounds.
-
-Sources (in priority order):
-  1. Local bundled royalty-free tracks in storage/music/   (fastest, zero risk)
-  2. Jamendo API (free, requires a free client_id)          (automated fallback)
-  3. None — pipeline continues without music                (never blocks render)
-
-NOTE ON PIXABAY:
-  Pixabay's public REST API (pixabay.com/api/) only covers images and videos.
-  It has no music/audio search endpoint, despite some third-party docs implying
-  otherwise. Any "media_type=music" query against it will not return usable
-  results. Pixabay support has been removed from the fetch chain for that
-  reason — PIXABAY_API_KEY is no longer read by this module.
-
-NOTE ON LICENSING:
-  Jamendo's API is documented as free for non-commercial use; commercial use
-  (which includes a monetized YouTube channel) technically requires contacting
-  Jamendo for a license. Individual tracks are also commonly CC BY-NC licensed.
-  Treat Jamendo as a convenient automated fallback for testing/development, and
-  verify licensing terms directly with Jamendo before relying on it at scale on
-  a monetized channel. Local files you've sourced yourself (Pixabay's own site
-  UI, YouTube Audio Library, Mixkit, etc.) remain the safest option and are
-  always tried first.
-
-Category → genre mapping:
-  technology, ai, programming → "electronic"
-  motivation, fitness          → "cinematic"
-  education, history, science  → "ambient"
-  travel, lifestyle            → "acoustic"
-  health, wellness             → "relaxing"
-  finance, business            → "corporate"
-  (default)                    → "background"
-
-Configure:
-    JAMENDO_CLIENT_ID=your_id_here   # free at https://devportal.jamendo.com/
-
-Audio mixing is done with pydub (already installed).
-The music is mixed under the voice at -22 dBFS by default (voice stays dominant).
-"""
-
+"""Background music fetch + mix under voice (Jamendo / local)."""
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 from typing import Optional
 
 import httpx
 
+from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-_JAMENDO_API = "https://api.jamendo.com/v3.0/tracks/"
-_CACHE_DIR = Path("./storage/cache/music")
-_LOCAL_MUSIC_DIR = Path("./storage/music")
-_TIMEOUT = 30.0
-
-_CATEGORY_GENRE: dict[str, str] = {
-    "technology":   "electronic",
-    "ai":           "electronic",
-    "programming":  "electronic",
-    "gaming":       "electronic",
-    "motivation":   "cinematic",
-    "fitness":      "cinematic",
-    "education":    "ambient",
-    "history":      "ambient",
-    "science":      "ambient",
-    "travel":       "acoustic",
-    "lifestyle":    "acoustic",
-    "health":       "relaxing",
-    "wellness":     "relaxing",
-    "finance":      "corporate",
-    "business":     "corporate",
-    "news":         "corporate",
-}
-
-_GENRE_TO_JAMENDO_TAG: dict[str, str] = {
-    "electronic": "electronic",
-    "cinematic":  "cinematic",
-    "ambient":    "ambient",
-    "acoustic":   "acoustic",
-    "relaxing":   "relaxing",
-    "corporate":  "corporate",
-    "background": "chillout",
-}
-
-
-def _jamendo_client_id() -> str:
-    from app.core.config import settings
-    return settings.jamendo_client_id or os.environ.get("JAMENDO_CLIENT_ID", "")
-
-
-def is_configured() -> bool:
-    has_local = _LOCAL_MUSIC_DIR.exists() and any(_LOCAL_MUSIC_DIR.glob("*.mp3"))
-    return bool(has_local) or bool(_jamendo_client_id())
+# Soft-duck: always keep bed a few dB quieter than the configured bed level
+_SOFT_DUCK_DB = -4.0
+# Safety floor: music must stay at least this many dB under average voice
+_MIN_VOICE_HEADROOM_DB = 18.0
 
 
 def genre_for_category(category: str) -> str:
-    return _CATEGORY_GENRE.get(category.lower(), "background")
+    cat = (category or "technology").lower()
+    mapping = {
+        "technology": "electronic",
+        "tech": "electronic",
+        "science": "ambient",
+        "finance": "corporate",
+        "health": "ambient",
+        "education": "piano",
+        "gaming": "electronic",
+        "news": "corporate",
+    }
+    for key, genre in mapping.items():
+        if key in cat:
+            return genre
+    return "electronic"
 
 
-async def fetch_track(
-    genre: str = "background",
-    duration_hint_seconds: float = 30.0,
-) -> Optional[str]:
-    local = _find_local_track(genre)
-    if local:
-        return local
+def _music_cache_dir() -> Path:
+    p = Path(settings.storage_local_path) / "music"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
 
-    if _jamendo_client_id():
-        path = await _fetch_from_jamendo(genre, duration_hint_seconds)
-        if path:
-            return path
 
-    logger.info("No background music available", genre=genre)
+def _local_track(genre: str) -> Optional[str]:
+    """Prefer a local file under storage/music if present."""
+    base = _music_cache_dir()
+    for name in (f"{genre}.mp3", f"{genre}.wav", "default.mp3", "bed.mp3"):
+        candidate = base / name
+        if candidate.exists() and candidate.stat().st_size > 1000:
+            return str(candidate)
+    # Any mp3 in folder
+    for f in sorted(base.glob("*.mp3")):
+        if f.stat().st_size > 1000:
+            return str(f)
     return None
 
 
-def _find_local_track(genre: str) -> Optional[str]:
-    if not _LOCAL_MUSIC_DIR.exists():
+async def fetch_track(genre: str = "electronic") -> Optional[str]:
+    """
+    Return path to a background music file.
+    Order: local cache → Jamendo (if API key) → None.
+    """
+    local = _local_track(genre)
+    if local:
+        return local
+
+    client_id = (getattr(settings, "jamendo_client_id", None) or "").strip()
+    if not client_id:
+        logger.info("No local music and no Jamendo client id — skip music")
         return None
-    for f in _LOCAL_MUSIC_DIR.glob("*.mp3"):
-        if genre in f.stem.lower():
-            return str(f)
-    files = list(_LOCAL_MUSIC_DIR.glob("*.mp3"))
-    return str(files[0]) if files else None
 
-
-async def _fetch_from_jamendo(genre: str, duration_hint_seconds: float) -> Optional[str]:
-    tag = _GENRE_TO_JAMENDO_TAG.get(genre, "chillout")
-
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_key = hashlib.md5(f"jamendo:{tag}".encode()).hexdigest()[:10]
-    cache_path = _CACHE_DIR / f"jamendo_{cache_key}.mp3"
-
-    if cache_path.exists() and cache_path.stat().st_size > 10_000:
-        return str(cache_path)
+    cache = _music_cache_dir() / f"jamendo_{genre}.mp3"
+    if cache.exists() and cache.stat().st_size > 1000:
+        return str(cache)
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
-                _JAMENDO_API,
+                "https://api.jamendo.com/v3.0/tracks/",
                 params={
-                    "client_id": _jamendo_client_id(),
+                    "client_id": client_id,
                     "format": "json",
-                    "limit": 20,
-                    "tags": tag,
+                    "limit": 5,
                     "audioformat": "mp32",
-                    "include": "musicinfo licenses",
-                    "ccsa": 1,
+                    "include": "musicinfo",
+                    "groupby": "artist_id",
                     "order": "popularity_total",
+                    "tags": genre,
                 },
             )
             resp.raise_for_status()
             data = resp.json()
-
-            results = data.get("results", [])
-
-            def _is_commercial(track: dict) -> bool:
-                lic = (track.get("license_ccurl") or "").lower()
-                if not lic:
-                    return False
-                return "nc" not in lic
-
-            downloadable = [
-                t for t in results
-                if t.get("audiodownload_allowed") is not False
-                and t.get("audio")
-                and _is_commercial(t)
-            ]
-            if not downloadable:
-                logger.info("Jamendo returned no downloadable tracks", tag=tag)
+            results = data.get("results") or []
+            if not results:
                 return None
-
-            track = downloadable[0]
-            audio_url = track.get("audiodownload") or track.get("audio")
+            audio_url = results[0].get("audio")
             if not audio_url:
                 return None
-
-            dl = await client.get(audio_url)
-            dl.raise_for_status()
-            cache_path.write_bytes(dl.content)
-
-        logger.info(
-            "Jamendo music downloaded",
-            genre=genre,
-            tag=tag,
-            track_name=track.get("name"),
-            artist=track.get("artist_name"),
-            license=track.get("license_ccurl"),
-            path=str(cache_path),
-        )
-        return str(cache_path)
+            audio_resp = await client.get(audio_url)
+            audio_resp.raise_for_status()
+            cache.write_bytes(audio_resp.content)
+            logger.info("Jamendo track cached", genre=genre, path=str(cache))
+            return str(cache)
     except Exception as exc:
-        logger.warning("Jamendo music fetch failed", genre=genre, tag=tag, error=str(exc))
+        logger.warning("Jamendo fetch failed", error=str(exc))
         return None
 
 
@@ -211,8 +120,8 @@ def mix_music_under_voice(
 
     The music is:
     - Looped if shorter than the voice track
-    - Volume-adjusted to `music_volume_db` (default -22 dBFS keeps voice dominant)
-    - Extra-capped so music stays at least ~14 dB under the voice average
+    - Volume-adjusted to `music_volume_db` plus soft-duck (-4 dB)
+    - Extra-capped so music stays at least ~18 dB under the voice average
     - Faded in and out
     - Trimmed to match voice duration
 
@@ -224,12 +133,15 @@ def mix_music_under_voice(
         voice = AudioSegment.from_file(voice_path)
         music = AudioSegment.from_file(music_path)
 
-        if music.dBFS != float("-inf"):
-            music = music + (music_volume_db - music.dBFS)
+        # Soft-duck: bed quieter than configured level so speech stays clear
+        target_bed_db = float(music_volume_db) + _SOFT_DUCK_DB
 
-        # Safety: keep music at least ~14 dB under voice average
+        if music.dBFS != float("-inf"):
+            music = music + (target_bed_db - music.dBFS)
+
+        # Safety: keep music well under voice average
         if voice.dBFS != float("-inf") and music.dBFS != float("-inf"):
-            max_music_dbfs = voice.dBFS - 14.0
+            max_music_dbfs = voice.dBFS - _MIN_VOICE_HEADROOM_DB
             if music.dBFS > max_music_dbfs:
                 music = music + (max_music_dbfs - music.dBFS)
 
@@ -252,6 +164,8 @@ def mix_music_under_voice(
             output=output_path,
             voice_duration_s=round(voice_ms / 1000, 1),
             music_volume_db=music_volume_db,
+            effective_bed_db=target_bed_db,
+            soft_duck_db=_SOFT_DUCK_DB,
             voice_dbfs=round(voice.dBFS, 1) if voice.dBFS != float("-inf") else None,
             music_dbfs_after=round(music.dBFS, 1) if music.dBFS != float("-inf") else None,
         )
@@ -267,27 +181,18 @@ def mix_music_under_voice(
 def normalize_audio(input_path: str, output_path: str, target_dbfs: float = -16.0) -> bool:
     """
     Normalize audio levels using pydub so the voice is at `target_dbfs`.
-
-    Returns True on success.
     """
     try:
         from pydub import AudioSegment  # type: ignore
 
         audio = AudioSegment.from_file(input_path)
+        if audio.dBFS == float("-inf"):
+            return False
         change = target_dbfs - audio.dBFS
-        normalized = audio + change
+        audio = audio + change
         out = Path(output_path)
-        normalized.export(str(out), format=out.suffix.lstrip(".") or "mp3")
-        logger.info(
-            "Audio normalized",
-            input=input_path,
-            output=output_path,
-            change_db=round(change, 1),
-        )
+        audio.export(str(out), format=out.suffix.lstrip(".") or "mp3")
         return True
-    except ImportError:
-        logger.warning("pydub not available — skipping normalization")
-        return False
     except Exception as exc:
-        logger.warning("Audio normalization failed", error=str(exc))
+        logger.warning("Audio normalize failed", error=str(exc))
         return False
