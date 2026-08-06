@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -79,13 +79,13 @@ class UploadRepository(BaseRepository[Upload]):
         return list(result.scalars().all())
 
     async def get_due_for_publish(self) -> list[Upload]:
-        """Return uploads that the Scheduler should now push to YouTube."""
         now = datetime.now(timezone.utc)
         result = await self.session.execute(
             select(Upload).where(
                 and_(
                     Upload.publish_status == PublishStatus.SCHEDULED,
                     Upload.scheduled_at <= now,
+                    Upload.youtube_video_id.is_(None),
                     Upload.status.notin_(
                         [UploadStatus.PUBLISHED, UploadStatus.UPLOADING]
                     ),
@@ -152,7 +152,6 @@ class UploadRepository(BaseRepository[Upload]):
         await self.delete(upload)
 
     async def get_published_videos(self, limit: int = 15) -> list[Upload]:
-        """Get recently published videos with related video and script info."""
         result = await self.session.execute(
             select(Upload)
             .options(selectinload(Upload.video).selectinload(Video.script))
@@ -163,11 +162,7 @@ class UploadRepository(BaseRepository[Upload]):
         return list(result.scalars().all())
 
     async def get_dashboard_videos(self, limit: int = 20) -> list[Upload]:
-        """Published + truly-pending scheduled uploads for the dashboard.
-
-        Scheduled rows that already have a YouTube ID are treated as published
-        (stuck publish_status healed in the UI query).
-        """
+        """Scheduled (not yet on YT) + published / has youtube_id."""
         opts = selectinload(Upload.video).selectinload(Video.script)
 
         scheduled = await self.session.execute(
@@ -189,10 +184,10 @@ class UploadRepository(BaseRepository[Upload]):
             select(Upload)
             .options(opts)
             .where(
-                and_(
-                    Upload.youtube_video_id.isnot(None)
-                    | (Upload.status == UploadStatus.PUBLISHED)
-                    | (Upload.publish_status == PublishStatus.PUBLISHED)
+                or_(
+                    Upload.status == UploadStatus.PUBLISHED,
+                    Upload.youtube_video_id.isnot(None),
+                    Upload.publish_status == PublishStatus.PUBLISHED,
                 )
             )
             .order_by(Upload.published_at.desc().nulls_last())
