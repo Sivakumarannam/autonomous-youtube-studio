@@ -28,24 +28,37 @@ def _timings_from_sidecar(
         return None
 
     path = Path(audio_path)
-    candidates = [
-        path.with_suffix(".timings.json"),
-        path.with_name(path.stem.replace("_mixed", "") + ".timings.json"),
-    ]
-    for c in list(candidates):
-        if "_kokoro" in c.name:
-            candidates.append(c.with_name(c.name.replace("_kokoro", "")))
+    stems = {
+        path.stem,
+        path.stem.replace("_mixed", ""),
+        path.stem.replace("_kokoro", ""),
+        path.stem.replace("_mixed", "").replace("_kokoro", ""),
+    }
+    candidates: list[Path] = []
+    for stem in stems:
+        candidates.append(path.with_name(stem + ".timings.json"))
+        candidates.append(path.parent / f"{stem}.timings.json")
+    # Any sibling timings for same uuid prefix
+    prefix = path.stem.split("_")[0]
+    if len(prefix) >= 8:
+        candidates.extend(sorted(path.parent.glob(f"{prefix}*.timings.json")))
 
     data = None
     used = None
+    seen: set[str] = set()
     for c in candidates:
-        if c.is_file():
-            try:
-                data = json.loads(c.read_text(encoding="utf-8"))
-                used = c
-                break
-            except Exception:
-                continue
+        key = str(c.resolve()) if c.exists() else str(c)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not c.is_file():
+            continue
+        try:
+            data = json.loads(c.read_text(encoding="utf-8"))
+            used = c
+            break
+        except Exception:
+            continue
     if not data:
         return None
 
@@ -53,19 +66,38 @@ def _timings_from_sidecar(
     if not raw:
         return None
 
+    # Parse raw timing rows
+    parsed: list[tuple[float, float, str]] = []
+    for item in raw:
+        if isinstance(item, dict):
+            start = float(item.get("start", item.get("start_seconds", 0.0)))
+            end = float(item.get("end", item.get("end_seconds", start + 1.0)))
+            text = str(item.get("text") or "")
+            parsed.append((start, max(start + 0.4, end), text))
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            start, end = float(item[0]), float(item[1])
+            parsed.append((start, max(start + 0.4, end), ""))
+
+    if not parsed:
+        return None
+
     timestamps: list[tuple[float, float]] = []
     word_ts: list[list[dict]] = []
 
+    # Map scene sentences onto Kokoro rows (index-aligned; stretch if counts differ)
+    n_sent = len(sentences)
+    n_raw = len(parsed)
     for i, sent in enumerate(sentences):
-        if i < len(raw):
-            item = raw[i]
-            if isinstance(item, dict):
-                start = float(item.get("start", 0.0))
-                end = float(item.get("end", start + 1.0))
-            elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                start, end = float(item[0]), float(item[1])
-            else:
-                return None
+        if n_raw == n_sent:
+            start, end, _ = parsed[i]
+        elif n_raw > 0:
+            # Proportional map when split counts differ
+            j0 = int(i * n_raw / n_sent)
+            j1 = int((i + 1) * n_raw / n_sent) - 1
+            j0 = min(max(j0, 0), n_raw - 1)
+            j1 = min(max(j1, j0), n_raw - 1)
+            start = parsed[j0][0]
+            end = parsed[j1][1]
         else:
             prev_end = timestamps[-1][1] if timestamps else 0.0
             start, end = prev_end, prev_end + 1.0
@@ -96,6 +128,8 @@ def _timings_from_sidecar(
         "low_ram_mode: using Kokoro sentence timings sidecar",
         path=str(used),
         sentences=len(sentences),
+        kokoro_rows=n_raw,
+        matched=n_sent == n_raw,
     )
     return timestamps, word_ts
 
