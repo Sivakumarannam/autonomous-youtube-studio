@@ -1,19 +1,14 @@
-# ── Optional RAG research pipeline ──────────────────────────────────────────
-# NOT installed by default (see requirements.txt). Install only if you want
-# RAG_RESEARCH_ENABLED=true. This pulls in torch (CPU build), which needs
-# roughly 2 GB of disk and adds real RAM overhead at runtime — think twice
-# before enabling this on a 1 GB Oracle "Micro" shape.
+# Optional RAG stack — install only when the VM has enough RAM/disk.
+# Do NOT add these to the main requirements.txt on Oracle Always Free (~1 GB).
 #
-# Install with:
-#   pip install torch --index-url https://download.pytorch.org/whl/cpu
 #   pip install -r requirements-rag.txt
 #
-# (torch is installed separately from its own CPU-only index above; if you
-# let this file install it too, remove the --index-url line, since pip
-# doesn't read custom index URLs from inside a requirements file
-# automatically unless declared with --extra-index-url. Simplest and most
-# reliable is still the two-command sequence above.)
+# Enables: FAISS vector store + sentence-transformers embeddings for chatbot RAG.
+# Keep RAG_RESEARCH_ENABLED=false on the 1 GB production VM.
 
-sentence-transformers
-faiss-cpu
-langchain-text-splitters
+faiss-cpu>=1.7.4,<2
+sentence-transformers>=2.2.0,<4
+
+# torch CPU wheel (avoids pulling CUDA / nvidia-* packages):
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0,<3
