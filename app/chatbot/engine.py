@@ -44,7 +44,9 @@ If you are uncertain or lack sufficient information to answer reliably, end your
 with the exact marker: __LOW_CONFIDENCE__
 
 Keep answers under 300 words. Use markdown formatting (bold, bullet points) for clarity.
-Never make up pipeline run IDs, video titles, or error messages — only use what is in the context."""
+Never make up pipeline run IDs, video titles, or error messages — only use what is in the context.
+For pure greetings (hi, hello, hey), reply briefly and warmly — do NOT dump system status
+and do NOT use __LOW_CONFIDENCE__."""
 
 
 async def answer_question(
@@ -61,6 +63,39 @@ async def answer_question(
         (sources, low_confidence)
     """
     sources: list[dict] = []
+
+    # Friendly greetings — never escalate / no live-status dump
+    q = (question or "").strip().lower()
+    _greetings = {
+        "hi",
+        "hi!",
+        "hello",
+        "hello!",
+        "hey",
+        "hey!",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "howdy",
+        "yo",
+        "sup",
+        "hi there",
+        "hello there",
+    }
+    if q in _greetings or q.rstrip("!.") in _greetings:
+        reply = (
+            "Hi! 👋 I'm the **Studio Assistant**. "
+            "How can I help you today?\n\n"
+            "You can ask about pipelines, uploads, channels, scheduler, "
+            'or say things like *"what\'s in the queue?"*.'
+        )
+        words = reply.split(" ")
+        for i, word in enumerate(words):
+            chunk = word if i == len(words) - 1 else word + " "
+            await on_token(chunk)
+            if i % 8 == 0:
+                await asyncio.sleep(0)
+        return [], False
 
     # 1. RAG retrieval (skipped on free-tier without faiss / sentence-transformers)
     rag_chunks: list = []
