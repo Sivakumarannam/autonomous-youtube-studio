@@ -1,7 +1,8 @@
 """Prefer spoken script.hook for on-screen overlay (monkeypatch render path).
 
 Applied from app.main lifespan so the first ~1.5s headline uses the spoken
-curiosity-gap hook instead of only seo_title.
+curiosity-gap hook instead of only seo_title. Falls back to seo_title when
+the spoken hook is too long for the frame.
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ logger = get_logger(__name__)
 
 
 def apply_video_hook_overlay_patch() -> None:
-    """Wrap VideoAgentService.run_for_script so render() gets script.hook."""
+    """Wrap VideoAgentService.run_for_script so render() gets a short hook."""
     try:
         from app.agents.video_agent import service as vas
     except Exception as exc:
@@ -28,10 +29,14 @@ def apply_video_hook_overlay_patch() -> None:
 
         def render_wrapper(*args, **kwargs):
             hook = (getattr(script, "hook", None) or "").strip()
-            if hook:
+            seo = (getattr(script, "seo_title", None) or topic_title or "").strip()
+            # Prefer short SEO title when spoken hook is a long sentence
+            if seo and (not hook or len(hook.split()) > 10):
+                kwargs["hook_text"] = seo
+            elif hook:
                 kwargs["hook_text"] = hook
             elif not kwargs.get("hook_text"):
-                kwargs["hook_text"] = getattr(script, "seo_title", None) or topic_title
+                kwargs["hook_text"] = seo or topic_title
             return orig_render(*args, **kwargs)
 
         self._renderer.render = render_wrapper  # type: ignore[method-assign]
@@ -42,4 +47,4 @@ def apply_video_hook_overlay_patch() -> None:
 
     vas.VideoAgentService.run_for_script = run_for_script  # type: ignore[assignment]
     vas.VideoAgentService._hook_overlay_patched = True  # type: ignore[attr-defined]
-    logger.info("Video hook overlay patch applied (prefer script.hook)")
+    logger.info("Video hook overlay patch applied (prefer script.hook / short seo)")
