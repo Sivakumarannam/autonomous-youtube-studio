@@ -38,7 +38,6 @@ def _timings_from_sidecar(
     for stem in stems:
         candidates.append(path.with_name(stem + ".timings.json"))
         candidates.append(path.parent / f"{stem}.timings.json")
-    # Any sibling timings for same uuid prefix
     prefix = path.stem.split("_")[0]
     if len(prefix) >= 8:
         candidates.extend(sorted(path.parent.glob(f"{prefix}*.timings.json")))
@@ -66,7 +65,6 @@ def _timings_from_sidecar(
     if not raw:
         return None
 
-    # Parse raw timing rows
     parsed: list[tuple[float, float, str]] = []
     for item in raw:
         if isinstance(item, dict):
@@ -84,14 +82,12 @@ def _timings_from_sidecar(
     timestamps: list[tuple[float, float]] = []
     word_ts: list[list[dict]] = []
 
-    # Map scene sentences onto Kokoro rows (index-aligned; stretch if counts differ)
     n_sent = len(sentences)
     n_raw = len(parsed)
     for i, sent in enumerate(sentences):
         if n_raw == n_sent:
             start, end, _ = parsed[i]
         elif n_raw > 0:
-            # Proportional map when split counts differ
             j0 = int(i * n_raw / n_sent)
             j1 = int((i + 1) * n_raw / n_sent) - 1
             j0 = min(max(j0, 0), n_raw - 1)
@@ -150,7 +146,6 @@ def apply_low_ram_patches() -> None:
 
     video_service.transcribe_sentences_from_audio = _align_without_whisper  # type: ignore[assignment]
 
-    # Cap long-form scene count / duration under LOW_RAM (still allows long)
     _orig_resolve = video_service.VideoAgentService._resolve_scenes
 
     async def _resolve_scenes_capped(self, script_id, output, script, audio_path=None):
@@ -199,6 +194,13 @@ def apply_low_ram_patches() -> None:
         video_renderer._render_fps = _render_fps_low_ram  # type: ignore[assignment]
     except Exception as exc:
         logger.warning("low_ram fps patch skipped", error=str(exc))
+
+    try:
+        from app.agents.voice_agent.timings_fallback_bootstrap import apply_timings_fallback_patch
+
+        apply_timings_fallback_patch()
+    except Exception as exc:
+        logger.warning("timings fallback patch skipped", error=str(exc))
 
     logger.info(
         "LOW_RAM_MODE active — Whisper skipped; Shorts + capped Long; static captions + light encode",
