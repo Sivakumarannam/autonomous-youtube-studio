@@ -20,24 +20,22 @@ class UploadRepository(BaseRepository[Upload]):
         super().__init__(Upload, session)
 
     async def update(self, obj: Upload, **kwargs: Any) -> Upload:
-        """Update an Upload and broadcast the change over WebSocket.
-
-        Covers publish/reject/schedule transitions and Scheduler-driven
-        status changes, all of which route through this method.
-        """
-        updated = await super().update(obj, **kwargs)
+        for key, value in kwargs.items():
+            if hasattr(obj, key):
+                setattr(obj, key, value)
+        self.session.add(obj)
+        await self.session.flush()
+        await self.session.refresh(obj)
+        updated = obj
         await broadcast_safe(
             {
-                "type": "upload",
-                "event": "updated",
-                "id": str(updated.id),
-                "status": updated.status.value
-                if hasattr(updated.status, "value")
-                else str(updated.status),
-                "publish_status": updated.publish_status.value
-                if hasattr(updated.publish_status, "value")
-                else str(updated.publish_status),
-                "scheduled_at": updated.scheduled_at,
+                "type": "upload_updated",
+                "upload_id": str(updated.id),
+                "status": str(updated.status),
+                "publish_status": str(updated.publish_status),
+                "scheduled_at": updated.scheduled_at.isoformat()
+                if updated.scheduled_at
+                else None,
             }
         )
         return updated
@@ -49,10 +47,10 @@ class UploadRepository(BaseRepository[Upload]):
         return result.scalar_one_or_none()
 
     async def get_or_raise(self, upload_id: UUID) -> Upload:
-        upload = await self.get_by_id(upload_id)
-        if upload is None:
-            raise NotFoundError("Upload", upload_id)
-        return upload
+        obj = await self.get(upload_id)
+        if obj is None:
+            raise NotFoundError("Upload", str(upload_id))
+        return obj
 
     async def get_all_by_status(
         self,
@@ -81,13 +79,7 @@ class UploadRepository(BaseRepository[Upload]):
         return list(result.scalars().all())
 
     async def get_due_for_publish(self) -> list[Upload]:
-        """Return uploads that the Scheduler should now push to YouTube.
-
-        Criteria:
-          - publish_status = SCHEDULED  (editorial approval done)
-          - scheduled_at  <= now()      (delay window has passed)
-          - UploadStatus  not in (PUBLISHED, UPLOADING)  (not already in flight)
-        """
+        """Return uploads that the Scheduler should now push to YouTube."""
         now = datetime.now(timezone.utc)
         result = await self.session.execute(
             select(Upload).where(
@@ -109,17 +101,15 @@ class UploadRepository(BaseRepository[Upload]):
         self,
         upload: Upload,
         youtube_video_id: str,
-        youtube_url: str,
-        response_data: str | None = None,
+        youtube_url: str | None = None,
     ) -> Upload:
         return await self.update(
             upload,
             status=UploadStatus.PUBLISHED,
+            publish_status=PublishStatus.PUBLISHED,
             youtube_video_id=youtube_video_id,
             youtube_url=youtube_url,
             published_at=datetime.now(timezone.utc),
-            response_data=response_data,
-            error_message=None,
         )
 
     async def mark_failed(self, upload: Upload, error_message: str) -> Upload:
@@ -130,56 +120,29 @@ class UploadRepository(BaseRepository[Upload]):
         )
 
     async def get_due_for_instagram(self) -> list[Upload]:
-        """Return published uploads whose instagram_scheduled_at has passed and not yet posted.
-
-        Excludes rows marked instagram_failed_permanently=True so the scheduler
-        never retries an upload that has already exhausted its attempt cap.
-        """
-        from sqlalchemy import and_, select
         now = datetime.now(timezone.utc)
         result = await self.session.execute(
             select(Upload).where(
                 and_(
                     Upload.status == UploadStatus.PUBLISHED,
-                    Upload.instagram_posted.is_(False),
                     Upload.instagram_scheduled_at.isnot(None),
                     Upload.instagram_scheduled_at <= now,
-                    Upload.instagram_failed_permanently.is_(False),
+                    Upload.instagram_posted_at.is_(None),
                 )
             )
         )
         return list(result.scalars().all())
 
     async def mark_instagram_failed_permanently(self, upload: Upload) -> Upload:
-        """Mark an upload as permanently failed for Instagram cross-posting.
+        return await self.update(upload, instagram_failed_permanently=True)
 
-        Called when instagram_retry_count reaches the cap (3 attempts).
-        The row is then excluded from get_due_for_instagram() forever.
-        """
+    async def mark_instagram_posted(self, upload: Upload) -> Upload:
         return await self.update(
             upload,
-            instagram_failed_permanently=True,
-        )
-
-    async def mark_instagram_posted(
-        self, upload: Upload, media_id: str
-    ) -> Upload:
-        return await self.update(
-            upload,
-            instagram_posted=True,
             instagram_posted_at=datetime.now(timezone.utc),
-            instagram_media_id=media_id,
         )
 
     async def delete_upload(self, upload: Upload) -> None:
-        """Delete an Upload and any Analytics rows tied to it.
-
-        Analytics.upload_id is NOT NULL, so simply deleting the Upload
-        would make SQLAlchemy try to null out that FK on any linked
-        Analytics row and violate the constraint. Analytics data for a
-        deleted video is no longer meaningful anyway, so we remove it
-        first, in the same transaction.
-        """
         from sqlalchemy import delete as sa_delete
         from app.database.models.analytics import Analytics
 
@@ -189,13 +152,7 @@ class UploadRepository(BaseRepository[Upload]):
         await self.delete(upload)
 
     async def get_published_videos(self, limit: int = 15) -> list[Upload]:
-        """Get recently published videos with related video and script info.
-
-        Eagerly loads Upload.video and Video.script so the dashboard
-        template can render upload.video.script.title without triggering
-        a lazy-load outside the async session context (which raises
-        MissingGreenlet).
-        """
+        """Get recently published videos with related video and script info."""
         result = await self.session.execute(
             select(Upload)
             .options(selectinload(Upload.video).selectinload(Video.script))
@@ -204,3 +161,37 @@ class UploadRepository(BaseRepository[Upload]):
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def get_dashboard_videos(self, limit: int = 20) -> list[Upload]:
+        """Published + scheduled uploads for the dashboard panel.
+
+        Shows when scheduled videos will go live; published rows show published_at.
+        Ordered: scheduled first (soonest), then published (newest first).
+        """
+        opts = selectinload(Upload.video).selectinload(Video.script)
+
+        scheduled = await self.session.execute(
+            select(Upload)
+            .options(opts)
+            .where(Upload.publish_status == PublishStatus.SCHEDULED)
+            .order_by(Upload.scheduled_at.asc().nulls_last())
+            .limit(limit)
+        )
+        published = await self.session.execute(
+            select(Upload)
+            .options(opts)
+            .where(Upload.status == UploadStatus.PUBLISHED)
+            .order_by(Upload.published_at.desc())
+            .limit(limit)
+        )
+        seen: set[str] = set()
+        out: list[Upload] = []
+        for u in list(scheduled.scalars().all()) + list(published.scalars().all()):
+            key = str(u.id)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(u)
+            if len(out) >= limit:
+                break
+        return out
