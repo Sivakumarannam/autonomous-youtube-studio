@@ -47,7 +47,7 @@ class UploadRepository(BaseRepository[Upload]):
         return result.scalar_one_or_none()
 
     async def get_or_raise(self, upload_id: UUID) -> Upload:
-        obj = await self.get(upload_id)
+        obj = await self.get_by_id(upload_id)
         if obj is None:
             raise NotFoundError("Upload", str(upload_id))
         return obj
@@ -129,6 +129,7 @@ class UploadRepository(BaseRepository[Upload]):
                     Upload.instagram_scheduled_at.isnot(None),
                     Upload.instagram_scheduled_at <= now,
                     Upload.instagram_posted_at.is_(None),
+                    Upload.instagram_failed_permanently.is_(False),
                 )
             )
         )
@@ -137,11 +138,18 @@ class UploadRepository(BaseRepository[Upload]):
     async def mark_instagram_failed_permanently(self, upload: Upload) -> Upload:
         return await self.update(upload, instagram_failed_permanently=True)
 
-    async def mark_instagram_posted(self, upload: Upload) -> Upload:
-        return await self.update(
-            upload,
-            instagram_posted_at=datetime.now(timezone.utc),
-        )
+    async def mark_instagram_posted(
+        self,
+        upload: Upload,
+        media_id: str | None = None,
+    ) -> Upload:
+        kwargs: dict[str, Any] = {
+            "instagram_posted": True,
+            "instagram_posted_at": datetime.now(timezone.utc),
+        }
+        if media_id is not None:
+            kwargs["instagram_media_id"] = media_id
+        return await self.update(upload, **kwargs)
 
     async def delete_upload(self, upload: Upload) -> None:
         from sqlalchemy import delete as sa_delete
