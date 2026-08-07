@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     youtube_refresh_token: str = ""
     youtube_redirect_uri: str = ""
     youtube_category_id: str = "27"
+    # Refresh-token lifetime tracking (Testing apps often ~7 days)
+    youtube_token_issued_at: str = ""  # YYYY-MM-DD
+    youtube_token_lifetime_days: int = 7
+    youtube_token_warn_days: int = 2
+    youtube_token_check_hours: int = 12
 
     # Stock Media APIs (free tier)
     pexels_api_key: str = ""
