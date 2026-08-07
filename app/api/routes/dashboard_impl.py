@@ -32,9 +32,6 @@ from app.web.templates import templates
 router = APIRouter(dependencies=[Depends(require_dashboard_auth)])
 
 
-# -------------------------
-# DASHBOARD PAGE
-# -------------------------
 @router.get("", name="dashboard_index")
 async def dashboard_index(
     request: Request,
@@ -47,7 +44,6 @@ async def dashboard_index(
     channel_automations = await _channel_automations_context(session)
     run_stages = {str(run.id): _pipeline_stage_context(run) for run in runs}
 
-    # Instagram queue stats
     ig_pending = [
         u for u in uploads
         if getattr(u, "instagram_scheduled_at", None)
@@ -64,6 +60,13 @@ async def dashboard_index(
     )
 
     from app.integrations.instagram_token_store import days_remaining as ig_token_days_remaining
+    from app.integrations.youtube_token_store import days_remaining as yt_token_days_remaining
+
+    youtube_configured = bool(
+        settings.youtube_client_id
+        and settings.youtube_client_secret
+        and settings.youtube_refresh_token
+    )
 
     return templates.TemplateResponse(
         request,
@@ -75,18 +78,17 @@ async def dashboard_index(
             "run_stages": run_stages,
             "uploads": uploads,
             "channel_automations": channel_automations,
-            # Notification channel status for the dashboard panel
             "notification_email_enabled": settings.notification_email_enabled,
             "notification_slack_enabled": settings.notification_slack_enabled,
             "notification_discord_enabled": settings.notification_discord_enabled,
             "notification_telegram_enabled": settings.notification_telegram_enabled,
             "instagram_enabled": settings.instagram_enabled,
-            # Instagram queue metrics
             "ig_pending_count": len(ig_pending),
             "ig_posted_count": len(ig_posted),
             "ig_next_scheduled": ig_next,
             "ig_token_days_remaining": ig_token_days_remaining(),
-            # Recent published uploads that need manual YouTube Studio actions
+            "youtube_configured": youtube_configured,
+            "yt_token_days_remaining": yt_token_days_remaining(),
             "pending_manual_actions": [
                 u.youtube_video_id
                 for u in uploads
@@ -98,9 +100,6 @@ async def dashboard_index(
     )
 
 
-# -------------------------
-# PARTIALS
-# -------------------------
 @router.get("/partials/pipeline-runs")
 async def pipeline_runs_partial(
     request: Request,
@@ -155,10 +154,7 @@ async def uploaded_videos_partial(
 ):
     from datetime import datetime, timezone
     upload_repo = UploadRepository(session)
-
-    # Get published uploads with their related video/script info
     uploaded_videos = await upload_repo.get_dashboard_videos(limit=20)
-
     return templates.TemplateResponse(
         request,
         "dashboard/_uploaded_videos.html",
@@ -169,9 +165,6 @@ async def uploaded_videos_partial(
     )
 
 
-# -------------------------
-# PUBLISHING ACTIONS (approve / reject)
-# -------------------------
 @router.post("/publishing/{upload_id}/approve", name="dashboard_approve_upload")
 async def approve_upload(
     upload_id: UUID,
@@ -181,7 +174,6 @@ async def approve_upload(
     svc = PublishingService(session)
     await svc.approve(upload_id)
     await session.commit()
-
     uploads = await UploadRepository(session).get_all_by_status(limit=50)
     return templates.TemplateResponse(
         request, "dashboard/_queue.html", {"uploads": uploads}
@@ -197,34 +189,22 @@ async def reject_upload(
     svc = PublishingService(session)
     await svc.reject(upload_id, reason="Rejected via dashboard.")
     await session.commit()
-
     uploads = await UploadRepository(session).get_all_by_status(limit=50)
     return templates.TemplateResponse(
         request, "dashboard/_queue.html", {"uploads": uploads}
     )
 
 
-# -------------------------
-# DELETE ACTIONS (YouTube + local, and local-only)
-# -------------------------
 @router.post("/uploads/{upload_id}/delete")
 async def delete_upload_everywhere(
     upload_id: UUID,
     request: Request,
     session: AsyncSession = Depends(get_db),
 ):
-    """Delete a video from YouTube AND this dashboard. Irreversible.
-
-    If YouTube reports the video was already deleted externally
-    (404 videoNotFound), the local record is NOT touched — instead a
-    confirmation dialog is returned asking the user whether to also
-    remove the now-orphaned local record.
-    """
     from datetime import datetime, timezone
     from app.integrations.youtube.exceptions import YouTubeVideoNotFoundError
 
     svc = PublishingService(session)
-
     try:
         await svc.delete_video_everywhere(upload_id)
     except YouTubeVideoNotFoundError:
@@ -234,12 +214,9 @@ async def delete_upload_everywhere(
             "dashboard/_confirm_already_deleted.html",
             {"upload_id": str(upload_id)},
         )
-
     await session.commit()
-
     upload_repo = UploadRepository(session)
     uploaded_videos = await upload_repo.get_dashboard_videos(limit=20)
-
     return templates.TemplateResponse(
         request,
         "dashboard/_uploaded_videos.html",
@@ -256,18 +233,12 @@ async def delete_upload_local_only(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ):
-    """Remove only the local Upload record — used after the user confirms
-    the video was already deleted directly on YouTube. No YouTube API call.
-    """
     from datetime import datetime, timezone
-
     svc = PublishingService(session)
     await svc.delete_local_only(upload_id)
     await session.commit()
-
     upload_repo = UploadRepository(session)
     uploaded_videos = await upload_repo.get_dashboard_videos(limit=20)
-
     return templates.TemplateResponse(
         request,
         "dashboard/_uploaded_videos.html",
@@ -278,22 +249,15 @@ async def delete_upload_local_only(
     )
 
 
-# -------------------------
-# PIPELINE RUN — delete (dashboard-only) & retry (self-heal)
-# -------------------------
 @router.post("/pipeline-runs/{run_id}/delete")
 async def delete_pipeline_run(
     run_id: UUID,
     request: Request,
     session: AsyncSession = Depends(get_db),
 ):
-    """Remove a PipelineRun row from the dashboard only — never calls
-    YouTube. If that run already published a video, the video and its
-    Upload record are untouched; use the Uploads delete action for that."""
     svc = PipelineService(session)
     await svc.delete_run(run_id)
     await session.commit()
-
     runs = await PipelineRunRepository(session).get_latest(limit=20)
     run_stages = {str(run.id): _pipeline_stage_context(run) for run in runs}
     return templates.TemplateResponse(
@@ -310,13 +274,9 @@ async def retry_pipeline_run(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ):
-    """Self-heal a failed or stuck pipeline run: starts a fresh attempt
-    for the same topic/channel/script_type. Does not resume mid-stage —
-    the pipeline doesn't support that — this creates a new run instead."""
     svc = PipelineService(session)
     await svc.retry_run(run_id, background_tasks=background_tasks)
     await session.commit()
-
     runs = await PipelineRunRepository(session).get_latest(limit=20)
     run_stages = {str(run.id): _pipeline_stage_context(run) for run in runs}
     return templates.TemplateResponse(
@@ -326,9 +286,6 @@ async def retry_pipeline_run(
     )
 
 
-# -------------------------
-# AUTOMATION ACTIONS
-# -------------------------
 @router.post("/channels/{channel_id}/automation/start")
 async def start_automation(
     channel_id: UUID,
@@ -337,7 +294,6 @@ async def start_automation(
 ):
     await ChannelAutomationService(session).start(channel_id)
     await session.commit()
-
     return templates.TemplateResponse(
         request,
         "dashboard/_channel_automation.html",
@@ -353,7 +309,6 @@ async def pause_automation(
 ):
     await ChannelAutomationService(session).pause(channel_id)
     await session.commit()
-
     return templates.TemplateResponse(
         request,
         "dashboard/_channel_automation.html",
@@ -369,7 +324,6 @@ async def delete_automation(
 ):
     await ChannelAutomationService(session).delete(channel_id)
     await session.commit()
-
     return templates.TemplateResponse(
         request,
         "dashboard/_channel_automation.html",
@@ -383,13 +337,8 @@ async def reset_channel(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ):
-    """HARD RESET — irreversible. Deletes every PipelineRun/Script/Video/
-    Upload for this channel AND deletes every matching video from YouTube
-    itself. The Channel and its Topics are left alone. Unlike the archive
-    action above, this does not preserve history."""
     result = await ChannelAutomationService(session).reset_channel(channel_id)
     await session.commit()
-
     return templates.TemplateResponse(
         request,
         "dashboard/_channel_reset_result.html",
@@ -400,9 +349,6 @@ async def reset_channel(
     )
 
 
-# -------------------------
-# PIPELINE RUN
-# -------------------------
 @router.post("/pipeline/run")
 async def trigger_pipeline_run(
     request: Request,
@@ -413,7 +359,6 @@ async def trigger_pipeline_run(
     topic_id = UUID(str(form["topic_id"]))
     channel_id = UUID(str(form["channel_id"]))
     script_type = str(form.get("script_type", "long"))
-
     svc = PipelineService(session)
     await svc.start(
         topic_id=topic_id,
@@ -422,10 +367,8 @@ async def trigger_pipeline_run(
         background_tasks=background_tasks,
     )
     await session.commit()
-
     runs = await PipelineRunRepository(session).get_latest(limit=20)
     run_stages = {str(run.id): _pipeline_stage_context(run) for run in runs}
-
     return templates.TemplateResponse(
         request,
         "dashboard/_pipeline_runs.html",
@@ -433,59 +376,25 @@ async def trigger_pipeline_run(
     )
 
 
-# -------------------------
-# HELPERS
-# -------------------------
-
-# Ordered pipeline stages shown in the stepper (must match the values written
-# to PipelineRun.current_stage / PipelineRun.failed_stage in the service).
 _PIPELINE_STAGES = [
-    "script",
-    "quality",
-    "seo",
-    "voice",
-    "video",
-    "upload",
-    "analytics",
+    "script", "quality", "seo", "voice", "video", "upload", "analytics",
 ]
 
 
 def _pipeline_stage_context(run) -> list[dict]:
-    """Return a list of stage dicts (name, state, icon) for the stepper UI.
-
-    State is one of: "done" | "active" | "failed" | "pending".
-    When the run is COMPLETE every stage is "done".
-
-    For failed runs (current_stage=None, failed_stage set) we infer completed
-    stages from the failed_stage position: every stage before the failed one
-    is marked "done" since the pipeline ran through them successfully.
-    """
     is_complete = str(getattr(run.status, "value", run.status)) == "complete"
     failed_stage = run.failed_stage or ""
     current_stage = run.current_stage or ""
-
     current_idx = (
         _PIPELINE_STAGES.index(current_stage)
-        if current_stage in _PIPELINE_STAGES
-        else -1
+        if current_stage in _PIPELINE_STAGES else -1
     )
     failed_idx = (
         _PIPELINE_STAGES.index(failed_stage)
-        if failed_stage in _PIPELINE_STAGES
-        else -1
+        if failed_stage in _PIPELINE_STAGES else -1
     )
-
-    # For failed runs where current_stage is cleared, use the failed_stage
-    # position to determine which prior stages completed successfully.
     effective_done_boundary = current_idx if current_idx >= 0 else failed_idx
-
-    _icons = {
-        "done": "✓",
-        "active": "…",
-        "failed": "✕",
-        "pending": "○",
-    }
-
+    _icons = {"done": "✓", "active": "…", "failed": "✕", "pending": "○"}
     stages = []
     for i, name in enumerate(_PIPELINE_STAGES):
         if is_complete:
@@ -499,33 +408,19 @@ def _pipeline_stage_context(run) -> list[dict]:
         else:
             state = "pending"
         stages.append({"name": name, "state": state, "icon": _icons[state]})
-
     return stages
 
 
 async def _channel_automations_context(session: AsyncSession) -> list[dict]:
-    """Fetch channel automations for display in dashboard.
-
-    IMPORTANT: This is a GET context. We NEVER write to the database here.
-    If an automation doesn't exist, we skip the channel (don't show it in the UI).
-    Automations must be created via explicit API calls, not implicitly during GET.
-    """
     channels = await ChannelRepository(session).get_all(limit=200)
     automation_repo = ChannelAutomationRepository(session)
     service = ChannelAutomationService(session)
-
     rows: list[dict] = []
-
     for channel in channels:
         automation = await automation_repo.get_by_channel_id(channel.id)
-
-        # If no automation exists in DB, skip this channel (don't show it).
-        # Automations are created via explicit API calls only.
         if automation is None:
             continue
-
         response = service._to_response(automation)
-
         rows.append(
             {
                 "channel": channel,
@@ -534,7 +429,6 @@ async def _channel_automations_context(session: AsyncSession) -> list[dict]:
                 "next_long": response.next_expected_long_video_date,
             }
         )
-
     return rows
 
 
@@ -546,7 +440,6 @@ def _scheduler_context() -> dict:
             next_run_at = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         pass
-
     return {
         "interval_minutes": settings.scheduler_interval_minutes,
         "next_run_at": next_run_at,
@@ -554,12 +447,8 @@ def _scheduler_context() -> dict:
     }
 
 
-# -------------------------
-# NOTIFICATION TEST
-# -------------------------
 @router.post("/notifications/test")
 async def test_notifications(request: Request):
-    """Fire a test message to every enabled notification channel."""
     from app.notifications.service import notify
     try:
         await notify(
@@ -583,20 +472,11 @@ async def test_notifications(request: Request):
         )
 
 
-# -------------------------
-# INSTAGRAM TOKEN — manual refresh
-# -------------------------
 @router.post("/instagram/refresh-token")
 async def refresh_instagram_token(request: Request):
-    """Attempt an immediate Instagram token refresh (the same mechanism
-    the daily watchdog uses). Always returns 200 with a rendered panel —
-    success or the manual regeneration steps — for the dashboard button
-    to swap in directly; never a bare error page."""
     from app.scheduler.instagram_token_watchdog import get_instagram_token_watchdog
-
     watchdog = get_instagram_token_watchdog()
     success, message, expires_in = await watchdog.manual_refresh()
-
     if success:
         return templates.TemplateResponse(
             request,
@@ -607,15 +487,42 @@ async def refresh_instagram_token(request: Request):
                 "auto_hide_seconds": 20,
             },
         )
-
     return templates.TemplateResponse(
         request,
         "dashboard/_instagram_refresh_result.html",
         {
             "success": False,
             "instructions": watchdog.manual_refresh_instructions(message),
-            # 10 minutes — enough time to actually click through Meta's
-            # dashboard flow, capped per your request of 10-15 min max.
             "auto_hide_seconds": 600,
         },
-    ) 
+    )
+
+
+@router.post("/youtube/refresh-token")
+async def refresh_youtube_token(request: Request):
+    """Verify YouTube refresh token (dashboard button)."""
+    from app.scheduler.youtube_token_watchdog import get_youtube_token_watchdog
+    from app.integrations.youtube_token_store import days_remaining
+
+    watchdog = get_youtube_token_watchdog()
+    success, message = await watchdog.manual_refresh()
+
+    if success:
+        return templates.TemplateResponse(
+            request,
+            "dashboard/_youtube_refresh_result.html",
+            {
+                "success": True,
+                "days_remaining": days_remaining(),
+                "auto_hide_seconds": 20,
+            },
+        )
+    return templates.TemplateResponse(
+        request,
+        "dashboard/_youtube_refresh_result.html",
+        {
+            "success": False,
+            "instructions": watchdog.reauth_instructions(message),
+            "auto_hide_seconds": 600,
+        },
+    )
