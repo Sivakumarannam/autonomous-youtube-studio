@@ -1,0 +1,27 @@
+{% if success %}
+<div style="margin-top:0.5rem;padding:0.6rem 0.8rem;background:#0d2a1a;border:1px solid #1a6b3c;border-radius:6px;font-size:0.8rem;color:#6ee7a8"
+     id="yt-refresh-result"
+     hx-swap-oob="true">
+  ✅ YouTube refresh token is valid. Access tokens auto-refresh on each upload.
+  {% if days_remaining is not none %}
+    <br>🔑 Valid for ~{{ days_remaining }} more day(s) (tracked lifetime window).
+  {% endif %}
+</div>
+<script>
+  setTimeout(function(){
+    var el = document.getElementById('yt-refresh-result');
+    if (el) el.remove();
+  }, {{ (auto_hide_seconds or 20) * 1000 }});
+</script>
+{% else %}
+<div style="margin-top:0.5rem;padding:0.6rem 0.8rem;background:#2a0d0d;border:1px solid #6b1a1a;border-radius:6px;font-size:0.78rem;color:#f0a0a0;white-space:pre-wrap"
+     id="yt-refresh-result">
+❌ {{ instructions }}
+</div>
+<script>
+  setTimeout(function(){
+    var el = document.getElementById('yt-refresh-result');
+    if (el) el.remove();
+  }, {{ (auto_hide_seconds or 600) * 1000 }});
+</script>
+{% endif %}
