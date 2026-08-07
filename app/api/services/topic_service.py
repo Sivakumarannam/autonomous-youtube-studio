@@ -22,8 +22,11 @@ class TopicService:
     async def create(self, data: TopicCreate) -> Topic:
         await self._channel_repo.get_by_id_or_raise(data.channel_id)
 
-        if await self._repo.title_exists(data.title, data.channel_id):
-            raise ValidationError(f"Topic '{data.title}' already exists for this channel")
+        if await self._repo.title_exists_any_content_type(data.title, data.channel_id):
+            raise ValidationError(
+                f"Topic '{data.title}' already exists for this channel "
+                f"(short and long share the same topic pool)"
+            )
 
         topic = Topic(
             channel_id=data.channel_id,
@@ -91,7 +94,7 @@ class TopicService:
             title = item.get("topic", "").strip()
             if not title:
                 continue
-            if await self._repo.title_exists(title, channel_id):
+            if await self._repo.title_exists_any_content_type(title, channel_id):
                 logger.debug("Skipping duplicate topic", title=title)
                 continue
             topic = Topic(

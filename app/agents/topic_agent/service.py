@@ -67,8 +67,8 @@ class TopicAgentService:
             title = item.get("topic", "").strip()
             if not title:
                 continue
-            if await self._topic_repo.title_exists(title, channel.id):
-                logger.debug("Skipping duplicate", title=title)
+            if await self._topic_repo.title_exists_any_content_type(title, channel.id):
+                logger.debug("Skipping duplicate (any content_type)", title=title)
                 continue
 
             topic = Topic(

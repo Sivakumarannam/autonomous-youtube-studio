@@ -1,11 +1,20 @@
+import re
 from typing import Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import select, desc, and_
+from sqlalchemy import select, desc, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models.topic import Topic, TopicStatus, TopicSource
 from app.database.repositories.base_repository import BaseRepository
+
+
+def normalize_topic_title(title: str) -> str:
+    """Lowercase, strip punctuation/extra spaces for cross short/long dedup."""
+    t = (title or "").lower().strip()
+    t = re.sub(r"[^\w\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
 
 
 class TopicRepository(BaseRepository[Topic]):
@@ -66,12 +75,30 @@ class TopicRepository(BaseRepository[Topic]):
         return result.scalars().all()
 
     async def title_exists(self, title: str, channel_id: UUID) -> bool:
+        """Exact title match (legacy). Prefer title_exists_any_content_type for dedup."""
         result = await self.session.execute(
             select(Topic).where(
                 and_(Topic.title == title, Topic.channel_id == channel_id)
             )
         )
         return result.scalar_one_or_none() is not None
+
+    async def title_exists_any_content_type(self, title: str, channel_id: UUID) -> bool:
+        """
+        True if this channel already has the same topic (normalized),
+        whether short or long. Blocks short+long duplicates of the same idea.
+        """
+        needle = normalize_topic_title(title)
+        if not needle:
+            return False
+
+        result = await self.session.execute(
+            select(Topic.title).where(Topic.channel_id == channel_id)
+        )
+        for (existing_title,) in result.all():
+            if normalize_topic_title(existing_title) == needle:
+                return True
+        return False
 
     async def set_status(self, topic_id: UUID, status: TopicStatus) -> Optional[Topic]:
         topic = await self.get_by_id(topic_id)
@@ -104,7 +131,6 @@ class TopicRepository(BaseRepository[Topic]):
         return result.scalar_one_or_none()
 
     async def get_published_count(self, channel_id: UUID) -> int:
-        from sqlalchemy import func
         result = await self.session.execute(
             select(func.count()).select_from(Topic).where(
                 and_(
