@@ -102,16 +102,19 @@ class UploadRepository(BaseRepository[Upload]):
         upload: Upload,
         youtube_video_id: str,
         youtube_url: str | None = None,
+        response_data: str | None = None,
     ) -> Upload:
         # Note: PublishStatus has no PUBLISHED member (draft|approved|scheduled|rejected).
         # Live state is UploadStatus.PUBLISHED + youtube_video_id.
-        return await self.update(
-            upload,
-            status=UploadStatus.PUBLISHED,
-            youtube_video_id=youtube_video_id,
-            youtube_url=youtube_url,
-            published_at=datetime.now(timezone.utc),
-        )
+        kwargs: dict[str, Any] = {
+            "status": UploadStatus.PUBLISHED,
+            "youtube_video_id": youtube_video_id,
+            "youtube_url": youtube_url,
+            "published_at": datetime.now(timezone.utc),
+        }
+        if response_data is not None:
+            kwargs["response_data"] = response_data
+        return await self.update(upload, **kwargs)
 
     async def mark_failed(self, upload: Upload, error_message: str) -> Upload:
         return await self.update(
