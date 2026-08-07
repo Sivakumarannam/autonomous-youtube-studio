@@ -48,6 +48,7 @@ async def dashboard_index(
         u for u in uploads
         if getattr(u, "instagram_scheduled_at", None)
         and not getattr(u, "instagram_posted", True)
+        and not getattr(u, "instagram_failed_permanently", False)
         and getattr(u, "status", None) == UploadStatus.PUBLISHED
     ]
     ig_posted = [

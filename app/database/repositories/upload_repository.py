@@ -87,7 +87,11 @@ class UploadRepository(BaseRepository[Upload]):
                     Upload.scheduled_at <= now,
                     Upload.youtube_video_id.is_(None),
                     Upload.status.notin_(
-                        [UploadStatus.PUBLISHED, UploadStatus.UPLOADING]
+                        [
+                            UploadStatus.PUBLISHED,
+                            UploadStatus.UPLOADING,
+                            UploadStatus.FAILED,
+                        ]
                     ),
                 )
             )
@@ -185,7 +189,11 @@ class UploadRepository(BaseRepository[Upload]):
                     Upload.publish_status == PublishStatus.SCHEDULED,
                     Upload.youtube_video_id.is_(None),
                     Upload.status.notin_(
-                        [UploadStatus.PUBLISHED, UploadStatus.UPLOADING]
+                        [
+                            UploadStatus.PUBLISHED,
+                            UploadStatus.UPLOADING,
+                            UploadStatus.FAILED,
+                        ]
                     ),
                 )
             )
