@@ -122,78 +122,82 @@ async def search_video(
         return None
 
 
-def extract_visual_keywords(narration: str) -> str:
-    """Concrete visual keywords for Pexels (avoid abstract / commercial junk)."""
+def extract_visual_keywords(narration: str, topic: str = "") -> str:
+    """Topic-agnostic visual query for Pexels. Avoids literal idioms & filler."""
     import re
 
-    text = re.sub(r"[^\w\s]", " ", (narration or "").lower())
-    stop_words = {
+    def _clean(s: str) -> str:
+        s = re.sub(r"[^\w\s]", " ", (s or "").lower())
+        return re.sub(r"\s+", " ", s).strip()
+
+    text = _clean(narration)
+    topic_l = _clean(topic)
+
+    # Universal idioms → never search the literal words
+    idiom_map = [
+        (r"break(?:ing)? the bank", "money savings budget"),
+        (r"costs? an arm and a leg", "expensive price tag"),
+        (r"piece of cake", "easy simple task"),
+        (r"hit the nail", "precise solution"),
+        (r"game changer", "innovation technology"),
+        (r"nobody expects?", "surprise reveal"),
+        (r"number (one|two|three|1|2|3)", ""),
+        (r"follow for (daily )?\w+", ""),
+        (r"subscribe|comment|like and share", ""),
+        (r"link in (the )?bio", ""),
+    ]
+    for pat, repl in idiom_map:
+        text = re.sub(pat, repl, text)
+
+    stop = {
         "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
         "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "shall", "can", "need", "dare", "ought",
-        "used", "to", "of", "in", "on", "at", "by", "for", "with", "about",
-        "against", "between", "into", "through", "during", "before", "after",
-        "above", "below", "from", "up", "down", "out", "off", "over", "under",
-        "again", "then", "once", "and", "or", "but", "if", "while", "that",
-        "this", "these", "those", "it", "its", "so", "as", "how", "what",
-        "when", "where", "which", "who", "why", "your", "our", "their", "you",
-        "we", "they", "he", "she", "i", "me", "him", "her", "us", "them",
-        "know", "just", "very", "really", "more", "most", "also", "well",
-        "even", "back", "any", "first", "second", "third", "fourth", "fifth",
-        "than", "now", "only", "number", "nobody", "expects", "coming",
-        "changing", "everything", "follow", "daily", "updates", "shocked",
-        "change", "special", "price", "sale", "deal", "today", "discount",
-        "offer", "secret", "shocking", "amazing", "best", "top", "new",
-        "game", "changer", "changers",
-        "subscribe", "comment", "like", "share", "link", "bio",
-        "watch", "next", "video", "shorts", "youtube",
+        "should", "may", "might", "can", "to", "of", "in", "on", "at", "by",
+        "for", "with", "about", "from", "up", "out", "and", "or", "but", "if",
+        "that", "this", "these", "those", "it", "its", "so", "as", "how",
+        "what", "when", "where", "which", "who", "why", "your", "our", "their",
+        "you", "we", "they", "first", "second", "third", "number", "nobody",
+        "expects", "actually", "really", "very", "just", "also", "more",
+        "most", "than", "now", "only", "into", "over", "under", "again",
+        "then", "once", "without", "everything", "coming", "changing",
+        "follow", "daily", "subscribe", "comment", "share", "video", "shorts",
+        "youtube", "watch", "next", "one", "will", "build", "builds",
     }
 
+    # Safe multi-word anchors (multi-niche). Never map bare "bank" → building.
     anchors = [
-        ("electric car", "electric car vehicle"),
-        ("electric vehicle", "electric vehicle road"),
-        ("ev ", "electric vehicle charging"),
-        ("charging", "ev fast charging station"),
-        ("battery", "electric car battery pack"),
-        ("solar roof", "solar panels on car roof"),
-        ("solar", "solar panels rooftop"),
-        ("range", "electric car highway driving"),
-        ("miles", "electric vehicle road trip"),
-        ("self driving", "autonomous car sensors"),
-        ("autonomous", "self driving car road"),
-        ("smartphone", "modern smartphone device"),
-        ("iphone", "iphone smartphone"),
-        ("android", "android smartphone"),
-        ("phone", "smartphone device close up"),
-        ("foldable", "foldable smartphone"),
-        ("chatgpt", "laptop coding artificial intelligence"),
-        ("coding", "software developer laptop code"),
-        ("programmer", "programmer coding screen"),
-        ("ai ", "artificial intelligence technology"),
-        ("robot", "humanoid robot technology"),
-        ("machine learning", "data science computer screen"),
-        ("rocket", "rocket launch space"),
-        ("nasa", "space rocket launch"),
-        ("mars", "mars planet surface"),
-        ("satellite", "satellite orbit earth"),
+        ("electric vehicle", "electric vehicle charging"),
+        ("electric car", "electric car road"),
+        ("solar panel", "solar panels rooftop"),
         ("stock market", "stock market trading screen"),
-        ("crypto", "cryptocurrency blockchain concept"),
-        ("bitcoin", "bitcoin digital currency"),
-        ("bank", "modern bank building"),
-        ("workout", "person gym workout"),
-        ("fitness", "fitness training gym"),
-        ("meditation", "meditation calm person"),
-        ("laptop", "laptop computer desk"),
         ("data center", "server room data center"),
-        ("cloud", "cloud computing servers"),
-        ("chip", "computer microchip close up"),
-        ("semiconductor", "semiconductor wafer factory"),
+        ("machine learning", "data science computer screen"),
+        ("smart phone", "modern smartphone"),
+        ("smartphone", "modern smartphone device"),
+        ("gaming pc", "gaming computer desk"),
+        ("graphics card", "computer graphics card"),
+        ("microchip", "computer microchip close up"),
+        ("cpu processor", "computer processor close up"),
+        ("refurbished", "refurbished electronics product"),
     ]
+    combined = f"{topic_l} {text}".strip()
     for needle, query in anchors:
-        if needle in text:
+        if needle in combined:
             return query
 
-    tokens = [w for w in text.split() if w not in stop_words and len(w) > 2]
-    if len(tokens) > 4:
-        tokens = tokens[-4:]
-    return " ".join(tokens[:4]) if tokens else "technology product"
+    tokens = [w for w in text.split() if w not in stop and len(w) > 2]
+    topic_tokens = [w for w in topic_l.split() if w not in stop and len(w) > 2]
+
+    # Prefer topic nouns, then narration nouns (max 5)
+    ranked: list[str] = []
+    for w in topic_tokens + tokens:
+        if w not in ranked:
+            ranked.append(w)
+        if len(ranked) >= 5:
+            break
+
+    if ranked:
+        return " ".join(ranked)
+    if topic_tokens:
+        return " ".join(topic_tokens[:4])
+    return "technology product professional photo"
