@@ -51,6 +51,15 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Dashboard: http://localhost:8000/dashboard
 
+## Documentation
+
+- [MANUAL_OPS.md](MANUAL_OPS.md) — production VM ops, chatbot KB, cleanup, TLS
+- [MANUAL_GUIDE.md](MANUAL_GUIDE.md) — manual video via dashboard/API
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — errors and fixes
+- [SETUP_GUIDE.md](SETUP_GUIDE.md) — install
+- [AUTOMATION_GUIDE.md](AUTOMATION_GUIDE.md) — daily automation
+- [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md) — env vars
+
 ## Key Features
 
 | Feature | Status | Notes |
