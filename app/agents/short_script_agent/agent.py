@@ -347,11 +347,17 @@ class ShortScriptAgent:
 
     @staticmethod
     def _extract_promised_count(hook: str, seo_title: str) -> int | None:
+        """Find the count promised in hook/title (any niche)."""
         blob = f"{hook or ''} {seo_title or ''}"
         matches = re.findall(
-            r"(?:top\s*)?(\d)\s+(?:best |new |free |secret )?(?:\w+\s+){0,2}"
-            r"(?:phones?|apps?|tips?|hacks?|tricks?|ways?|tools?|ideas?|facts?|steps?|secrets?|"
-            r"reasons?|game\s*changers?|changes?|things?|features?|upgrades?)",
+            r"(?:top\s*)?(\d)\s+"
+            r"(?:best |new |free |secret |budget |cheap |simple |easy )?"
+            r"(?:\w+\s+){0,3}"
+            r"(?:phones?|apps?|tips?|hacks?|tricks?|ways?|tools?|ideas?|facts?|"
+            r"steps?|secrets?|reasons?|things?|features?|upgrades?|builds?|"
+            r"pcs?|laptops?|cars?|phones?|gadgets?|devices?|options?|picks?|"
+            r"methods?|habits?|rules?|mistakes?|fixes?|changes?|"
+            r"game\s*changers?)",
             blob,
             flags=re.I,
         )
@@ -359,13 +365,14 @@ class ShortScriptAgent:
             n = int(matches[0])
             if 2 <= n <= 9:
                 return n
-        m = re.search(r"\b([2-9])\b", (seo_title or hook or "")[:50])
+        m = re.search(r"\b([2-9])\b", (seo_title or hook or "")[:60])
         if m:
             return int(m.group(1))
         return None
 
     @staticmethod
     def _count_main_items(main: str) -> int:
+        """Count delivered list items in MAIN / full_script (any niche)."""
         if not main:
             return 0
         ordinals = re.findall(
@@ -375,10 +382,16 @@ class ShortScriptAgent:
             flags=re.I,
         )
         if ordinals:
-            return len(ordinals)
+            seen: set[str] = set()
+            for o in ordinals:
+                key = o.lower().replace("1st", "first").replace("2nd", "second").replace(
+                    "3rd", "third"
+                )
+                seen.add(key)
+            return len(seen)
         numbered = re.findall(r"(?:^|[\s])([1-9])[\.\)]\s", main)
         if numbered:
-            return len(numbered)
+            return len(set(numbered))
         soft = re.findall(r"\b(Next|Then|Also|Plus)\b", main, flags=re.I)
         if soft:
             return len(soft) + 1
