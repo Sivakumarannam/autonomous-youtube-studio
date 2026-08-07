@@ -32,6 +32,33 @@
   Channels auto-enable when their secrets are set. WhatsApp: requires CallMeBot API key (<a href="https://www.callmebot.com/blog/free-api-whatsapp-messages/" target="_blank" style="color:var(--accent)">setup guide</a>).
 </p>
 
+{# ── YouTube OAuth token ─────────────────────────────────────────────── #}
+{% if youtube_configured %}
+<div style="margin-top:1rem;padding:0.85rem 1rem;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:0.85rem">
+  <strong style="display:flex;align-items:center;gap:0.4rem">▶️ YouTube OAuth</strong>
+  <p style="margin:0.5rem 0 0;font-size:0.72rem;color:var(--muted)">
+    {% if yt_token_days_remaining is not none %}
+      {% if yt_token_days_remaining <= 2 %}
+        <span style="color:#e05252">⚠️ YouTube token valid for {{ yt_token_days_remaining }} more day(s) — access tokens still auto-refresh; re-auth soon if this is a Testing app (~7 day refresh tokens).</span>
+      {% else %}
+        🔑 YouTube token valid for {{ yt_token_days_remaining }} more day(s) (access tokens auto-refresh; re-auth only if refresh token expires).
+      {% endif %}
+    {% else %}
+      ⚠️ YouTube token expiry unknown — set <code>YOUTUBE_TOKEN_ISSUED_AT=YYYY-MM-DD</code> in .env after pasting a new refresh token.
+    {% endif %}
+  </p>
+  <button
+    hx-post="/dashboard/youtube/refresh-token"
+    hx-target="#yt-refresh-result-wrap"
+    hx-swap="innerHTML"
+    style="margin-top:0.5rem;padding:0.35rem 0.8rem;font-size:0.75rem;background:transparent;
+           border:1px solid var(--accent);color:var(--accent);border-radius:6px;cursor:pointer"
+    onclick="this.textContent='Checking…';this.disabled=true;setTimeout(()=>{this.textContent='🔄 Check / Refresh Token Now';this.disabled=false},4000)"
+  >🔄 Check / Refresh Token Now</button>
+  <div id="yt-refresh-result-wrap"></div>
+</div>
+{% endif %}
+
 {# ── Instagram cross-post queue ─────────────────────────────────────── #}
 {% if instagram_enabled %}
 <div style="margin-top:1rem;padding:0.85rem 1rem;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:0.85rem">
