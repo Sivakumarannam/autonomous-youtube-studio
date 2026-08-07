@@ -144,6 +144,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     count=len(_orphaned_runs),
                     pipeline_run_ids=[str(_r.id) for _r in _orphaned_runs],
                 )
+                try:
+                    from app.notifications.high_alert import high_alert
+                    await high_alert(
+                        title="HIGH ALERT — Orphaned pipeline runs after restart",
+                        body=(
+                            f"{len(_orphaned_runs)} run(s) were stuck RUNNING and "
+                            "marked FAILED on startup (crash/redeploy)."
+                        ),
+                        key="orphaned_pipeline_runs",
+                        extra={
+                            "count": len(_orphaned_runs),
+                            "ids": ",".join(str(_r.id) for _r in _orphaned_runs[:10]),
+                        },
+                        cooldown_s=60,
+                    )
+                except Exception:
+                    pass
     except Exception as _exc:
         logger.error(
             "Startup pipeline-run reconciliation failed — any stuck runs "
@@ -212,6 +229,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.scheduler.youtube_token_watchdog import get_youtube_token_watchdog
     youtube_token_watchdog = get_youtube_token_watchdog()
 
+    from app.scheduler.health_watchdog import get_health_watchdog
+    health_watchdog = get_health_watchdog()
+
     if settings.run_internal_schedulers:
         scheduler.start()
         automation_scheduler.start()
@@ -219,9 +239,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         storage_cleanup_scheduler.start()
         instagram_token_watchdog.start()
         youtube_token_watchdog.start()
+        health_watchdog.start()
 
     yield
 
+    health_watchdog.shutdown()
     youtube_token_watchdog.shutdown()
     instagram_token_watchdog.shutdown()
     storage_cleanup_scheduler.shutdown()
@@ -346,7 +368,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(NotFoundError)
     async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
-        return JSONResponse(status_code=404, content={"error": exp.code, "message": exc.message})
+        return JSONResponse(status_code=404, content={"error": exp.code, "message": exp.message})
 
     @app.exception_handler(ValidationError)
     async def validation_handler(request: Request, exp: ValidationError) -> JSONResponse:
@@ -374,7 +396,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exp: Exception) -> JSONResponse:
-        logger.error("Unhandled exception", exc=str(exp), path=request.url.path)
+        logger.error("Unhandled exception", exp=str(exp), path=request.url.path)
         return JSONResponse(
             status_code=500,
             content={"error": "INTERNAL_ERROR", "message": "An unexpected error occurred"},
