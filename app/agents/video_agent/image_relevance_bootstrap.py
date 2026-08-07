@@ -1,4 +1,4 @@
-"""Image relevance: grounded prompts, Pexels-first, no double AI generate.
+"""Image relevance: grounded prompts, Pexels-first, topic-aware keywords.
 
 Applied from app.main lifespan.
 """
@@ -29,6 +29,7 @@ def apply_image_relevance_patch() -> None:
         script_id: str,
         scenes: list[dict[str, Any]],
         resolution: tuple[int, int] = (1280, 720),
+        topic: str = "",
     ) -> dict[int, str]:
         from app.integrations.image_provider import ImageProvider, enhance_prompt
 
@@ -38,6 +39,7 @@ def apply_image_relevance_patch() -> None:
             r"^(intro|scene|point|hook|body|cta|conclusion|outro|section)\b",
             re.IGNORECASE,
         )
+        topic = (topic or getattr(self, "_current_topic_title", "") or "").strip()
 
         try:
             for scene in scenes:
@@ -63,7 +65,8 @@ def apply_image_relevance_patch() -> None:
 
                 visual_prompt = (
                     f"Photorealistic scene illustrating: {prompt}. "
-                    f"Relevant real-world subject matching the narration. "
+                    f"Relevant real-world subject matching the topic"
+                    f"{f' ({topic})' if topic else ''}. "
                     f"No text, no watermark, no price tags, no sale signs, "
                     f"no logos, no stock photo watermarks, "
                     f"no faces close-up unless the topic requires a person."
@@ -79,7 +82,7 @@ def apply_image_relevance_patch() -> None:
                         )
 
                         orientation = "portrait" if width < height else "landscape"
-                        search_q = extract_visual_keywords(prompt)
+                        search_q = extract_visual_keywords(prompt, topic=topic)
                         pexels_path = await download_photo(
                             search_q, orientation=orientation
                         )
@@ -90,6 +93,7 @@ def apply_image_relevance_patch() -> None:
                                 "Pexels stock photo selected",
                                 scene=scene_num,
                                 query=search_q,
+                                topic=topic[:80] if topic else "",
                             )
                     except Exception as pex_exc:
                         logger.debug("Pexels fetch skipped", error=str(pex_exc))
@@ -123,4 +127,4 @@ def apply_image_relevance_patch() -> None:
 
     vas.VideoAgentService._generate_scene_images = _generate_scene_images  # type: ignore[method-assign]
     vas.VideoAgentService._image_relevance_patched = True  # type: ignore[attr-defined]
-    logger.info("Image relevance patch applied (Pexels-first, grounded prompts)")
+    logger.info("Image relevance patch applied (Pexels-first, topic-aware keywords)")
