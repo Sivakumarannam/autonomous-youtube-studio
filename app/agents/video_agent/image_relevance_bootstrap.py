@@ -24,6 +24,32 @@ def apply_image_relevance_patch() -> None:
     if getattr(vas.VideoAgentService, "_image_relevance_patched", False):
         return
 
+    # ── Set topic title on every video run (any niche) ─────────────────
+    _orig_run = vas.VideoAgentService.run_for_script
+
+    async def _run_for_script_with_topic(
+        self,
+        script,
+        topic_title: str = "",
+        description: str = "",
+        script_type: str = "long",
+    ):
+        self._current_topic_title = (
+            topic_title
+            or getattr(script, "seo_title", None)
+            or getattr(script, "title", None)
+            or ""
+        ).strip()
+        return await _orig_run(
+            self,
+            script,
+            topic_title=topic_title,
+            description=description,
+            script_type=script_type,
+        )
+
+    vas.VideoAgentService.run_for_script = _run_for_script_with_topic  # type: ignore[method-assign]
+
     async def _generate_scene_images(
         self,
         script_id: str,
@@ -127,4 +153,6 @@ def apply_image_relevance_patch() -> None:
 
     vas.VideoAgentService._generate_scene_images = _generate_scene_images  # type: ignore[method-assign]
     vas.VideoAgentService._image_relevance_patched = True  # type: ignore[attr-defined]
-    logger.info("Image relevance patch applied (Pexels-first, topic-aware keywords)")
+    logger.info(
+        "Image relevance patch applied (topic title + Pexels-first keywords)"
+    )
