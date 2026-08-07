@@ -1,4 +1,16 @@
-mystudioapp.duckdns.org {
-    reverse_proxy api:8000
+# Automatic HTTPS via Let's Encrypt (Caddy default).
+# Certs stored in volume caddy-data — renews on its own (~30 days before expiry).
+# Requirements: DNS A/AAAA for this host → VM IP, ports 80+443 open.
+
+{
+	# Optional: ACME account email (expiry / failure notices from Let's Encrypt)
+	email admin@mystudioapp.duckdns.org
 }
 
+mystudioapp.duckdns.org {
+	reverse_proxy api:8000
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+}
