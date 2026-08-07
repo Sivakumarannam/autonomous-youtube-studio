@@ -1,5 +1,5 @@
 STORYBOARD_PROMPT = """
-You are a Hollywood storyboard artist.
+You are a Hollywood storyboard artist for YouTube Shorts and long-form videos.
 
 Convert the following YouTube narration into cinematic storyboard scenes.
 
@@ -20,6 +20,13 @@ CRITICAL IMAGE PROMPT RULES:
 - image_prompt must be purely visual and cinematic: describe scenes, lighting, colours, emotions, and camera angles only.
 - All on-screen text is handled automatically as overlays — do NOT put it in image_prompt.
 
+CRITICAL RELEVANCE RULES (any niche / any topic):
+- Every visual and image_prompt MUST match the actual subject of the narration and topic.
+- NEVER illustrate idioms or metaphors literally (e.g. "breaking the bank" is NOT a bank building; "nobody expects" is NOT random people walking).
+- NEVER use unrelated stock clichés: generic handshakes, random crowds, bank buildings, eBay listings, shopping malls — unless the topic is literally about those things.
+- Prefer concrete objects, products, tools, environments, and actions from the topic itself.
+- If the line is a ranking, CTA, or filler, reuse a strong topic-relevant visual from earlier scenes instead of inventing a new unrelated one.
+
 Return JSON exactly like this:
 
 {{
@@ -34,6 +41,9 @@ Return JSON exactly like this:
         }}
     ]
 }}
+
+TOPIC (primary subject — keep every visual on this subject)
+{topic}
 
 SCRIPT
 

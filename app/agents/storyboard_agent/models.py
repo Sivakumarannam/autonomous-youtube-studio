@@ -17,6 +17,7 @@ class StoryboardScene(BaseModel):
 
 class StoryboardRequest(BaseModel):
     script: str
+    topic: str = ""
 
 
 class StoryboardResponse(BaseModel):

@@ -23,6 +23,7 @@ class StoryboardService:
 
         prompt = STORYBOARD_PROMPT.format(
             script=request.script,
+            topic=(request.topic or "").strip() or "(infer from script)",
         )
 
         response = await self.provider.generate_text(
