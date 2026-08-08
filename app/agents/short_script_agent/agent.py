@@ -195,8 +195,7 @@ class ShortScriptAgent:
             hashtags = ["#Shorts"] + hashtags
         hashtags = hashtags[:12]
 
-        if cta and cta not in full_script:
-            full_script = (full_script + " " + cta).strip()
+        full_script = self._dedupe_trailing_cta(full_script, cta)
 
         word_count = len(full_script.split())
         duration = round(word_count / self.WORDS_PER_SECOND, 1)
@@ -278,6 +277,40 @@ class ShortScriptAgent:
         if not text or new_count < 1:
             return text
         return re.sub(r"\b([2-9])\b", str(new_count), text, count=1)
+
+    @staticmethod
+    def _dedupe_trailing_cta(full_script: str, cta: str) -> str:
+        """Ensure CTA is spoken once at the end (no double CTA audio)."""
+        fs = (full_script or "").strip()
+        c = (cta or "").strip()
+        if not fs:
+            return c
+        if not c:
+            return fs
+
+        parts = re.split(r"(?<=[.!?])\s+", fs)
+        parts = [p.strip() for p in parts if p.strip()]
+
+        def _norm(s: str) -> str:
+            return re.sub(r"[^a-z0-9\s]", "", s.lower()).strip()
+
+        c_norm = _norm(c)
+        while len(parts) >= 1 and c_norm and (
+            _norm(parts[-1]) == c_norm
+            or (
+                c_norm in _norm(parts[-1])
+                and len(_norm(parts[-1])) <= len(c_norm) + 12
+            )
+        ):
+            parts.pop()
+
+        while len(parts) >= 2 and _norm(parts[-1]) == _norm(parts[-2]):
+            parts.pop()
+
+        fs2 = " ".join(parts).strip()
+        if c_norm and c_norm not in _norm(fs2):
+            fs2 = (fs2 + " " + c).strip()
+        return fs2
 
     @staticmethod
     def _sanitize_cta(cta: str) -> str:
