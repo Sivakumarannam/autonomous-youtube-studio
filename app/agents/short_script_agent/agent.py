@@ -1,342 +1,107 @@
+"""Short-form script agent — retention-loop structure for 15-30s Shorts."""
+from __future__ import annotations
+
 import json
 import re
-import time
-from pathlib import Path
-from typing import Optional
+from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.agents.short_script_agent.models import ShortScriptAgentOutput
+from app.agents.short_script_agent.models import ShortScriptRequest, ShortScriptResult
 from app.agents.short_script_agent.prompts import (
     SHORT_SCRIPT_SYSTEM_PROMPT,
     build_short_script_prompt,
+    build_short_seo_prompt,
 )
-from app.agents.short_script_agent.hook_utils import strengthen_hook, EXTRA_LEAK_PATTERNS
 from app.core.config import settings
-from app.core.exceptions import AgentError
 from app.core.logging import get_logger
-from app.database.models.research import Research
-from app.database.models.script import Script, ScriptStatus, ScriptType
-from app.database.models.topic import Topic
-from app.database.repositories.script_repository import ScriptRepository
-from app.llm_providers.base import BaseLLMProvider
+from app.integrations.llm_provider import LLMProvider
 
 logger = get_logger(__name__)
 
 
-_INSTRUCTION_LEAK_PATTERNS: list[str] = [
-    r"opening \d",
-    r"first \d[-–]\d seconds",
-    r"main content explaining",
-    r"the closing call to action",
-    r"the key point",
-    r"\(first \d",
-    r"seconds\)",
-    r"section\s*[:,]",
-    r"purpose\s*[:,]",
-    r"duration\s*[:,]",
-    r"grab attention immediately",
-    r"briefly explain what",
-    r"wrap up with",
-    r"deliver the key value",
-    *EXTRA_LEAK_PATTERNS,
-]
-_LEAK_PATTERN = re.compile("|".join(_INSTRUCTION_LEAK_PATTERNS), re.IGNORECASE)
-
-
-def _strip_instruction_leaks(text: str) -> str:
-    if not text:
-        return text
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    kept = [s for s in sentences if not _LEAK_PATTERN.search(s)]
-    if not kept:
-        return text.strip()
-    result = " ".join(kept).strip()
-    return re.sub(r"  +", " ", result)
-
-
 class ShortScriptAgent:
-    AGENT_NAME = "ShortScriptAgent"
-    TARGET_MIN_WORDS = 65
-    TARGET_MAX_WORDS = 75
-    WORDS_PER_SECOND = 2.63
+    def __init__(self, llm: LLMProvider | None = None) -> None:
+        self._llm = llm or LLMProvider()
 
-    def __init__(self, llm_provider: BaseLLMProvider) -> None:
-        self._llm = llm_provider
-
-    async def run(
-        self,
-        topic: Topic,
-        research: Optional[Research] = None,
-        session: Optional[AsyncSession] = None,
-        niche: str = "technology",
-        rag_context: Optional[str] = None,
-    ) -> Script:
-        logger.info("ShortScriptAgent starting", topic_id=str(topic.id))
-        start = time.monotonic()
-
-        summary, key_facts = self._extract_research(research)
-
-        try:
-            raw = await self._generate(
-                topic_title=topic.title,
-                research_summary=summary,
-                key_facts=key_facts,
-                niche=niche,
-                language="en",
-                rag_context=rag_context,
-            )
-        except Exception as e:
-            logger.error("ShortScriptAgent failed", error=str(e))
-            raise AgentError(self.AGENT_NAME, str(e)) from e
-
-        file_path = self._save_script_file(topic_id=str(topic.id), content=raw.full_script)
-
-        script_record = Script(
-            topic_id=topic.id,
-            channel_id=topic.channel_id,
-            script_type=ScriptType.SHORT,
-            content=raw.full_script,
-            word_count=raw.word_count,
-            estimated_duration=raw.estimated_duration_seconds,
-            hook=raw.hook,
-            cta=raw.cta,
-            seo_title=raw.seo_title,
-            seo_description=raw.seo_description,
-            seo_tags=json.dumps(raw.tags),
-            hashtags=json.dumps(raw.hashtags),
-            file_path=file_path,
-            status=ScriptStatus.DRAFT,
-        )
-
-        if session:
-            repo = ScriptRepository(session)
-            script_record = await repo.create(script_record)
-
-        elapsed = time.monotonic() - start
-        logger.info(
-            "ShortScriptAgent complete",
-            topic_id=str(topic.id),
-            words=raw.word_count,
-            elapsed=round(elapsed, 2),
-        )
-
-        return script_record
-
-    async def _generate(
-        self,
-        topic_title: str,
-        research_summary: Optional[str],
-        key_facts: list[str],
-        niche: str,
-        language: str,
-        rag_context: Optional[str] = None,
-    ) -> ShortScriptAgentOutput:
+    async def generate(self, request: ShortScriptRequest) -> ShortScriptResult:
         prompt = build_short_script_prompt(
-            topic_title=topic_title,
-            research_summary=research_summary,
-            key_facts=key_facts,
-            niche=niche,
-            language=language,
-            rag_context=rag_context,
+            topic_title=request.topic_title,
+            research_summary=request.research_summary,
+            key_facts=request.key_facts or [],
+            niche=request.niche or settings.channel_niche or "technology",
+            language=request.language or "en",
+            rag_context=request.rag_context,
         )
-
-        response = await self._llm.generate_text(
-            prompt=prompt,
+        raw = await self._llm.complete_json(
             system=SHORT_SCRIPT_SYSTEM_PROMPT,
-            temperature=0.85,
-            max_tokens=2048,
+            user=prompt,
+            temperature=0.7,
         )
+        result = self._parse(raw, request)
+        result = self._apply_count_qa(result)
+        return result
 
-        return self._parse_response(response, topic_title)
-
-    def _parse_response(self, raw: str, topic_title: str) -> ShortScriptAgentOutput:
-        cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("```").strip()
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if match:
-            cleaned = match.group(0)
-
-        try:
-            data = json.loads(cleaned)
-        except json.JSONDecodeError:
-            word_count = len(raw.split())
-            return ShortScriptAgentOutput(
-                hook=raw[:100],
-                body=raw,
-                cta="Follow for more tips!",
-                full_script=raw,
-                word_count=word_count,
-                estimated_duration_seconds=max(
-                    15, min(60, int(word_count / self.WORDS_PER_SECOND))
-                ),
-                seo_title=topic_title[:60],
-                seo_description=topic_title,
-                tags=[],
-                hashtags=["#Shorts"],
-            )
-
-        hook = _strip_instruction_leaks(str(data.get("hook", "")).strip())
-        intro = _strip_instruction_leaks(str(data.get("intro", "")).strip())
-        main = _strip_instruction_leaks(
-            str(data.get("main", data.get("body", ""))).strip()
-        )
-        outro = _strip_instruction_leaks(str(data.get("outro", "")).strip())
-        cta = _strip_instruction_leaks(
-            str(data.get("cta", "Follow for more tips!")).strip()
-        )
-
+    def _parse(self, data: dict[str, Any], request: ShortScriptRequest) -> ShortScriptResult:
+        if not isinstance(data, dict):
+            data = {}
+        hook = str(data.get("hook", "")).strip()
+        intro = str(data.get("intro", "")).strip()
+        main = str(data.get("main", "")).strip()
+        outro = str(data.get("outro", "")).strip()
+        cta = str(data.get("cta", "Subscribe for more!")).strip()
         full_script = str(data.get("full_script", "")).strip()
         if not full_script:
-            parts = [hook, intro, main, outro, cta]
-            full_script = " ".join(p for p in parts if p)
-        else:
-            full_script = _strip_instruction_leaks(full_script)
+            parts = [p for p in (hook, intro, main, outro, cta) if p]
+            full_script = " ".join(parts)
 
-        hook = strengthen_hook(hook, full_script)
+        seo_title = str(data.get("seo_title", request.topic_title or "")).strip()
+        seo_description = str(data.get("seo_description", "")).strip()
+        tags = data.get("tags") or []
+        hashtags = data.get("hashtags") or []
+        if not isinstance(tags, list):
+            tags = []
+        if not isinstance(hashtags, list):
+            hashtags = []
+        tags = [str(t).strip() for t in tags if str(t).strip()][:28]
+        hashtags = [str(h).strip() for h in hashtags if str(h).strip()]
+        if "#Shorts" not in hashtags and "#shorts" not in [h.lower() for h in hashtags]:
+            hashtags = ["#Shorts"] + hashtags
+        hashtags = hashtags[:12]
 
-        actual_word_count = len(full_script.split())
+        word_count = int(data.get("word_count") or len(full_script.split()))
+        duration = float(data.get("estimated_duration_seconds") or max(15.0, word_count / 2.6))
 
-        if actual_word_count > self.TARGET_MAX_WORDS:
-            sentences = re.split(r"(?<=[.!?])\s+", full_script)
-            rebuilt: list[str] = []
-            running_words = 0
-            for sentence in sentences:
-                sw = len(sentence.split())
-                if running_words + sw > self.TARGET_MAX_WORDS and rebuilt:
-                    break
-                rebuilt.append(sentence)
-                running_words += sw
-            truncated = " ".join(rebuilt).strip()
-            logger.warning(
-                "Script exceeded max word count; truncated to fit Shorts duration.",
-                original_words=actual_word_count,
-                truncated_words=len(truncated.split()),
-                max_words=self.TARGET_MAX_WORDS,
-            )
-            full_script = truncated
-            actual_word_count = len(full_script.split())
+        hook, cta, full_script, seo_title = self._normalize_fields(
+            hook, cta, full_script, seo_title
+        )
 
-        word_count = actual_word_count
-        duration = int(word_count / self.WORDS_PER_SECOND)
-        duration = max(25, min(28, duration))
-
-        tags = list(data.get("tags", []))
-        hashtags = list(data.get("hashtags", ["#Shorts"]))
-
-        base_keywords = [
-            w.lower() for w in re.findall(r"\w+", topic_title) if len(w) > 2
-        ] or ["video", "content"]
-        modifiers = [
-            "explained", "tips", "guide", "tutorial", "how to", "best", "breakdown",
-            "summary", "viral", "trending", "review", "analysis", "top", "update",
-            "secrets", "hacks", "facts", "new",
-        ]
-
-        if len(tags) < 22:
-            for mod in modifiers:
-                for kw in base_keywords:
-                    new_tag = f"{kw} {mod}"
-                    if new_tag not in tags:
-                        tags.append(new_tag)
-                    if len(tags) >= 22:
-                        break
-                if len(tags) >= 22:
-                    break
-            while len(tags) < 22:
-                tags.append(f"{base_keywords[0]} info {len(tags)}")
-
-        if len(hashtags) < 8:
-            for kw in base_keywords:
-                new_ht = f"#{kw.capitalize()}"
-                if new_ht not in hashtags:
-                    hashtags.append(new_ht)
-                if len(hashtags) >= 8:
-                    break
-            for mod in modifiers:
-                new_ht = f"#{mod.capitalize()}"
-                if new_ht not in hashtags:
-                    hashtags.append(new_ht)
-                if len(hashtags) >= 8:
-                    break
-            while len(hashtags) < 8:
-                hashtags.append(f"#Trend{len(hashtags)}")
-
-        seo_title = str(data.get("seo_title", topic_title[:60])).strip() or topic_title[:60]
-
-        hook, cta, full_script, seo_title = self._apply_script_qa(
+        return ShortScriptResult(
             hook=hook,
+            intro=intro,
             main=main,
-            cta=cta,
-            full_script=full_script,
-            seo_title=seo_title,
-        )
-
-        seo_description = self._enrich_description(
-            description=str(data.get("seo_description", "")),
-            hashtags=hashtags,
-            cta=cta,
-        )
-
-        actual_word_count = len(full_script.split())
-        word_count = actual_word_count
-        duration = int(word_count / self.WORDS_PER_SECOND)
-        duration = max(25, min(28, duration))
-
-        return ShortScriptAgentOutput(
-            hook=hook,
-            body=main,
+            outro=outro,
             cta=cta,
             full_script=full_script,
             word_count=word_count,
             estimated_duration_seconds=duration,
             seo_title=seo_title,
-            seo_description=seo_description,
+            seo_description=seo_description or full_script[:140],
             tags=tags,
             hashtags=hashtags,
         )
 
-    def _apply_script_qa(
+    def _normalize_fields(
         self,
         hook: str,
-        main: str,
         cta: str,
         full_script: str,
         seo_title: str,
     ) -> tuple[str, str, str, str]:
-        """Enforce count honesty and CTA = last spoken line.
-
-        Aligns on-screen hook digit with body (fixes 2-on-screen vs 3-spoken).
-        """
-        cta_clean = (cta or "").strip()
+        hook = (hook or "").strip()
+        cta_clean = self._sanitize_cta(cta)
         fs = (full_script or "").strip()
-        if cta_clean:
-            if cta_clean not in fs:
-                fs = (fs + " " + cta_clean).strip()
-                logger.info("Script QA: appended cta onto full_script for voice/caption match")
-            else:
-                if not fs.rstrip(".!?").endswith(cta_clean.rstrip(".!?")):
-                    fs_wo = fs.replace(cta_clean, " ").strip()
-                    fs_wo = re.sub(r"\s{2,}", " ", fs_wo)
-                    fs = (fs_wo + " " + cta_clean).strip()
-                    logger.info("Script QA: moved cta to end of full_script")
+        seo_title = (seo_title or "").strip()
 
-        promised = self._extract_promised_count(hook, seo_title)
-        items = self._count_main_items(main) or self._count_main_items(fs)
-        if promised is not None and promised >= 2 and items >= 2 and promised != items:
-            logger.warning(
-                "Script QA: hook/title count != body item count — aligning to body",
-                promised=promised,
-                delivered=items,
-            )
-            seo_title = self._rewrite_count_in_title(seo_title, items)
-            hook = self._rewrite_count_in_title(hook, items)
-            fs = self._rewrite_count_in_title(fs, items)
-            logger.info(
-                "Script QA: rewrote promised count to match body",
-                new_count=items,
-            )
-
-        cta_clean = self._sanitize_cta(cta_clean)
+        # Ensure cta is last sentence of full_script
         if cta_clean:
             if cta_clean not in fs:
                 fs = (fs + " " + cta_clean).strip()
@@ -350,68 +115,87 @@ class ShortScriptAgent:
         """Find the count promised in hook/title (any niche)."""
         blob = f"{hook or ''} {seo_title or ''}"
         matches = re.findall(
-            r"(?:top\s*)?(\d)\s+"
-            r"(?:best |new |free |secret |budget |cheap |simple |easy )?"
-            r"(?:\w+\s+){0,3}"
-            r"(?:phones?|apps?|tips?|hacks?|tricks?|ways?|tools?|ideas?|facts?|"
-            r"steps?|secrets?|reasons?|things?|features?|upgrades?|builds?|"
-            r"pcs?|laptops?|cars?|phones?|gadgets?|devices?|options?|picks?|"
-            r"methods?|habits?|rules?|mistakes?|fixes?|changes?|"
-            r"game\s*changers?)",
+            r"\b([2-9]|1[0-2])\s+(?:phones?|apps?|tips?|hacks?|tricks?|ways?|tools?|ideas?|facts?|steps?|secrets?|reasons?|things?|features?|upgrades?|builds?|pcs?|laptops?|cars?|gadgets?|devices?|options?|picks?|methods?|habits?|rules?|mistakes?|fixes?|changes?|game\s*changers?|trends?)\b",
             blob,
             flags=re.I,
         )
         if matches:
-            n = int(matches[0])
-            if 2 <= n <= 9:
-                return n
-        m = re.search(r"\b([2-9])\b", (seo_title or hook or "")[:60])
+            try:
+                return int(matches[0])
+            except ValueError:
+                pass
+        # Fallback: leading number in seo_title
+        m = re.search(r"\b([2-9])\b", (seo_title or "")[:60])
         if m:
-            return int(m.group(1))
+            try:
+                return int(m.group(1))
+            except ValueError:
+                pass
         return None
 
     @staticmethod
-    def _count_main_items(main: str) -> int:
-        """Count delivered list items in MAIN / full_script (any niche)."""
-        if not main:
-            return 0
+    def _count_main_items(main: str, full_script: str) -> int:
+        """Count ordinal / numbered list items in main or full script."""
+        blob = f"{main or ''} {full_script or ''}"
         ordinals = re.findall(
-            r"\b(First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|"
-            r"1st|2nd|3rd|4th|5th|6th|7th|8th|9th)\b",
-            main,
+            r"\b(First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth)\b",
+            blob,
             flags=re.I,
         )
         if ordinals:
-            seen: set[str] = set()
-            for o in ordinals:
-                key = o.lower().replace("1st", "first").replace("2nd", "second").replace(
-                    "3rd", "third"
-                )
-                seen.add(key)
-            return len(seen)
-        numbered = re.findall(r"(?:^|[\s])([1-9])[\.\)]\s", main)
+            return len(set(o.lower() for o in ordinals))
+        numbered = re.findall(r"(?:^|[\s.])(?:number\s+)?([1-9]|10)[.):]\s", blob, flags=re.I)
         if numbered:
             return len(set(numbered))
-        soft = re.findall(r"\b(Next|Then|Also|Plus)\b", main, flags=re.I)
-        if soft:
-            return len(soft) + 1
         return 0
 
-    @staticmethod
-    def _rewrite_count_in_title(text: str, new_count: int) -> str:
-        if not text or new_count < 1:
-            return text
-        return re.sub(r"\b([2-9])\b", str(new_count), text, count=1)
+    def _apply_count_qa(self, result: ShortScriptResult) -> ShortScriptResult:
+        """If title/hook promises N but body delivers M, rewrite title number to M."""
+        promised = self._extract_promised_count(result.hook, result.seo_title)
+        items = self._count_main_items(result.main, result.full_script)
+        if not promised or not items or promised == items:
+            return result
+        # Rewrite number in hook and seo_title
+        new_hook = re.sub(
+            rf"\b{promised}\b",
+            str(items),
+            result.hook or "",
+            count=1,
+        )
+        new_title = re.sub(
+            rf"\b{promised}\b",
+            str(items),
+            result.seo_title or "",
+            count=1,
+        )
+        logger.info(
+            "count_qa_rewrite",
+            promised=promised,
+            items=items,
+            hook_before=result.hook,
+            hook_after=new_hook,
+        )
+        result.hook = new_hook
+        result.seo_title = new_title
+        # Keep full_script hook aligned if it starts with old hook
+        if result.full_script and result.hook:
+            # soft: replace first occurrence of old number in full_script opening
+            fs = result.full_script
+            fs2 = re.sub(rf"\b{promised}\b", str(items), fs, count=1)
+            result.full_script = fs2
+        return result
 
     @staticmethod
     def _sanitize_cta(cta: str) -> str:
-        """Keep end-card / spoken CTA short and grammatical."""
+        """Keep end-card / spoken CTA short; prefer Subscribe for YouTube."""
         c = (cta or "").strip()
         if not c:
-            return "Follow for more"
+            return "Subscribe for more"
         low = c.lower()
         if any(x in low for x in ("shocked you", "which change", "change shocked")):
-            return "Follow for more"
+            return "Subscribe for more"
+        # YouTube growth: Follow → Subscribe
+        c = re.sub(r"\bfollow\b", "Subscribe", c, flags=re.I)
         if len(c) > 60:
             c = c[:57].rstrip() + "..."
         return c
@@ -419,47 +203,13 @@ class ShortScriptAgent:
     def _enrich_description(
         self,
         description: str,
+        niche: str,
         hashtags: list[str],
-        cta: str,
     ) -> str:
-        desc = description.strip()
-
-        existing_inline = set(re.findall(r"#\w+", desc))
-        missing = [h for h in hashtags if h not in existing_inline]
-        needed = max(0, 7 - len(existing_inline))
-        if needed > 0 and missing:
-            desc = desc.rstrip() + " " + " ".join(missing[:needed])
-
-        cta_lower = cta.lower()
-        desc_lower = desc.lower()
-        if (
-            cta
-            and cta_lower not in desc_lower
-            and "subscribe" not in desc_lower
-            and "follow" not in desc_lower
-        ):
-            desc = desc.rstrip() + " " + cta.strip()
-
-        if len(desc) < 100 and cta and cta not in desc:
-            desc = desc.rstrip() + " " + cta.strip()
-
-        return desc
-
-    def _extract_research(self, research: Optional[Research]) -> tuple[Optional[str], list[str]]:
-        if not research:
-            return None, []
-        summary = research.summary
-        key_facts: list[str] = []
-        if research.key_facts:
-            try:
-                key_facts = json.loads(research.key_facts)
-            except json.JSONDecodeError:
-                key_facts = []
-        return summary, key_facts
-
-    def _save_script_file(self, topic_id: str, content: str) -> str:
-        scripts_dir = Path(settings.storage_local_path) / "scripts" / "short"
-        scripts_dir.mkdir(parents=True, exist_ok=True)
-        file_path = scripts_dir / f"{topic_id}_short.txt"
-        file_path.write_text(content, encoding="utf-8")
-        return str(file_path)
+        d = (description or "").strip()
+        if not d:
+            d = f"Daily {niche} facts. Subscribe for more."
+        tags_line = " ".join(hashtags[:5]) if hashtags else "#Shorts"
+        if tags_line not in d:
+            d = f"{d} {tags_line}".strip()
+        return d[:500]
