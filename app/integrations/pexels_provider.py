@@ -139,12 +139,17 @@ def extract_visual_keywords(narration: str, topic: str = "") -> str:
         (r"costs? an arm and a leg", "expensive price tag"),
         (r"piece of cake", "easy simple task"),
         (r"hit the nail", "precise solution"),
-        (r"game changer", "innovation technology"),
-        (r"nobody expects?", "surprise reveal"),
-        (r"number (one|two|three|1|2|3)", ""),
+        (r"game changer", "innovation technology breakthrough"),
+        # Do not map to party/gender-reveal stock
+        (r"nobody expects?", ""),
+        (r"the one nobody expects", ""),
+        (r"but wait[-—,]?\s*number\s+\w+", ""),
+        (r"number (one|two|three|four|five|1|2|3|4|5)", ""),
         (r"follow for (daily )?\w+", ""),
         (r"subscribe|comment|like and share", ""),
         (r"link in (the )?bio", ""),
+        (r"which trend will you", ""),
+        (r"invest in\??", ""),
     ]
     for pat, repl in idiom_map:
         text = re.sub(pat, repl, text)
