@@ -19,8 +19,8 @@ Every script follows this exact 5-part RETENTION LOOP structure:
                            "But wait — number [N] is the one nobody expects."
   4. OUTRO      (20-25s) — Payoff: the best item or twist, held until now.
   5. CTA        (25-28s) — Natural CTA. Vary phrasing each time
-                           (e.g. "Follow for daily [niche] facts" / "Which one shocked you? Comment!" /
-                           "Save this — you'll need it").
+                           (e.g. "Subscribe for daily [niche] facts" / "Which one shocked you? Comment!" /
+                           "Save this — you'll need it"). Prefer Subscribe over Follow on YouTube.
 
 Your scripts must have:
 - A HOOK that states conflict or payoff in the FIRST sentence (viewer must feel FOMO if they swipe)
@@ -42,7 +42,7 @@ SCRIPT QA HARD RULES (must never violate):
   - Pattern interrupt only when there are 4+ items, after item 2.
 
   CAPTION / CTA ALIGNMENT:
-  - `cta` MUST be the exact final spoken sentence in `full_script` (verbatim).
+  - `cta` MUST be the exact final sentence in `full_script` (verbatim).
   - Do not change meaning between on-screen CTA and voice (no "life trick" vs "AI trick").
   - One string only: the same words in `cta` and at the end of `full_script`.
 
@@ -103,9 +103,9 @@ Retention-loop structure (REAL spoken words only — never a label):
                        BANNED starts: "Here's what", "In this video", "Welcome",
                        "Have you ever wondered", "Today we", "Let's talk".
   2. intro  (2-5s)   — State the payoff in one line. Why this matters RIGHT NOW.
-  3. main   (5-20s)  — 3-5 rapid items. After item 2: pattern-interrupt, then deliver the twist last.
+  3. main   (5-20s)   — 3-5 rapid items. After item 2: pattern-interrupt, then deliver the twist last.
   4. outro  (20-25s) — Withheld payoff for people who stayed.
-  5. cta    (25-28s) — Vary: "Follow for daily {niche} facts" OR "Which shocked you? Comment!" OR "Save this."
+  5. cta    (25-28s) — Vary: "Subscribe for daily {niche} facts" OR "Which shocked you? Comment!" OR "Save this and subscribe."
 
 Requirements:
 - Total word count: 65-75 words (STRICT)
@@ -126,8 +126,8 @@ WORKED EXAMPLE (different topic — do NOT copy wording):
   "intro": "Fix it in under twenty seconds and stop wasting answers.",
   "main": "First, stop pasting the same prompt everywhere — accuracy dies. Second, give real examples from your work. Third, say who you are before you ask. But number four is the one nobody expects.",
   "outro": "Tell the AI to check its own answer before you trust it. That one habit kills most mistakes.",
-  "cta": "Follow for daily AI tips — which step will you try first?",
-  "full_script": "99% of people prompt AI the wrong way! Fix it in under twenty seconds and stop wasting answers. First, stop pasting the same prompt everywhere — accuracy dies. Second, give real examples from your work. Third, say who you are before you ask. But number four is the one nobody expects. Tell the AI to check its own answer before you trust it. That one habit kills most mistakes. Follow for daily AI tips — which step will you try first?",
+  "cta": "Subscribe for daily AI tips — which step will you try first?",
+  "full_script": "99% of people prompt AI the wrong way! Fix it in under twenty seconds and stop wasting answers. First, stop pasting the same prompt everywhere — accuracy dies. Second, give real examples from your work. Third, say who you are before you ask. But number four is the one nobody expects. Tell the AI to check its own answer before you trust it. That one habit kills most mistakes. Subscribe for daily AI tips — which step will you try first?",
   "word_count": 70,
   "estimated_duration_seconds": 27,
   "seo_title": "Stop Prompting AI Wrong #Shorts",
