@@ -8,8 +8,8 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-_MAX_WORDS = 8
-_MAX_CHARS = 48
+_MAX_WORDS = 6
+_MAX_CHARS = 40
 
 
 def _shorten_hook(text: str) -> str:
@@ -20,7 +20,7 @@ def _shorten_hook(text: str) -> str:
     for sep in (".", "!", "?"):
         if sep in t:
             first = t.split(sep)[0].strip()
-            if 8 <= len(first) <= _MAX_CHARS + 10:
+            if 6 <= len(first) <= _MAX_CHARS + 8:
                 t = first
                 break
     words = t.upper().split()
