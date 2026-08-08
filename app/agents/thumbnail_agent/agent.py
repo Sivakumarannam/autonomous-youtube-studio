@@ -27,7 +27,7 @@ class ThumbnailAgent:
     Thumbnail Design Agent.
 
     Generates a detailed thumbnail concept and design specification
-    using the LLM, then renders a placeholder PNG using Pillow.
+    using the LLM, then renders a high-CTR PNG (Pexels background + bold text).
     The rendered image is saved to local storage.
     """
 
@@ -42,7 +42,7 @@ class ThumbnailAgent:
         topic_title: str,
         niche: str = "technology",
     ) -> ThumbnailAgentOutput:
-        """Generate thumbnail concept and render a placeholder image."""
+        """Generate thumbnail concept and render a growth-oriented image."""
         logger.info("ThumbnailAgent starting", script_id=str(script.id))
         start = time.monotonic()
 
@@ -61,11 +61,12 @@ class ThumbnailAgent:
             logger.error("ThumbnailAgent concept generation failed", error=str(exc))
             raise AgentError(self.AGENT_NAME, str(exc)) from exc
 
-        # Render placeholder thumbnail to disk
+        # Render growth thumbnail to disk
         file_path = self._render_thumbnail(
             script_id=str(script.id),
             script_type=str(script.script_type),
             output=output,
+            topic_title=topic_title or seo_title,
         )
         output.file_path = file_path
 
@@ -216,21 +217,20 @@ class ThumbnailAgent:
         script_id: str,
         script_type: str,
         output: ThumbnailAgentOutput,
+        topic_title: str = "",
     ) -> str:
-        """
-        Render a placeholder thumbnail PNG using Pillow.
-        Returns the file path. Falls back gracefully if Pillow is unavailable.
-        """
+        """High-CTR thumbnail: stock photo bg + short bold text (not a flat placeholder)."""
         thumbnails_dir = Path(settings.storage_local_path) / "thumbnails"
         thumbnails_dir.mkdir(parents=True, exist_ok=True)
         file_path = thumbnails_dir / f"{script_id}_thumbnail.png"
 
         try:
-            from PIL import Image, ImageDraw, ImageFont
+            from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+            import httpx
 
-            width, height = (1080, 1920) if script_type == "short" else (1280, 720)
+            is_short = "short" in str(script_type).lower()
+            width, height = (1080, 1920) if is_short else (1280, 720)
 
-            # Parse colors with fallback
             def _hex(hex_str: str, fallback: tuple) -> tuple:
                 try:
                     h = hex_str.lstrip("#")
@@ -238,52 +238,119 @@ class ThumbnailAgent:
                 except Exception:
                     return fallback
 
-            bg_color = _hex(output.design.background_color, (13, 17, 23))
-            accent_color = _hex(output.design.accent_color, (33, 150, 243))
-            text_color = _hex(output.design.text_color, (255, 255, 255))
+            accent_color = _hex(getattr(output.design, "accent_color", "#FFD700"), (255, 215, 0))
+            text_color = (255, 255, 255)
 
-            img = Image.new("RGB", (width, height), bg_color)
+            raw = (output.title_text or output.concept or topic_title or "WATCH THIS").strip()
+            words = re.sub(r"[^\w\s\-]", "", raw).split()
+            title = " ".join(words[:5]).upper() or "WATCH THIS"
+
+            img = None
+            try:
+                from app.integrations.pexels_provider import (
+                    extract_visual_keywords,
+                    is_configured as pexels_ok,
+                    _api_key,
+                    _PEXELS_PHOTO_URL,
+                )
+                if pexels_ok():
+                    q = extract_visual_keywords(title, topic=topic_title or title)
+                    orientation = "portrait" if is_short else "landscape"
+                    with httpx.Client(timeout=12.0) as client:
+                        resp = client.get(
+                            _PEXELS_PHOTO_URL,
+                            headers={"Authorization": _api_key()},
+                            params={"query": q, "orientation": orientation, "per_page": 3},
+                        )
+                        resp.raise_for_status()
+                        photos = (resp.json().get("photos") or [])
+                        url = None
+                        if photos:
+                            src = photos[0].get("src") or {}
+                            url = src.get("large2x") or src.get("large") or src.get("original")
+                        if url:
+                            from io import BytesIO
+                            img_bytes = client.get(url).content
+                            bg = Image.open(BytesIO(img_bytes)).convert("RGB")
+                            bw, bh = bg.size
+                            scale = max(width / bw, height / bh)
+                            nw, nh = int(bw * scale), int(bh * scale)
+                            bg = bg.resize((nw, nh), Image.LANCZOS)
+                            left = (nw - width) // 2
+                            top = (nh - height) // 2
+                            img = bg.crop((left, top, left + width, top + height))
+                            img = ImageEnhance.Contrast(img).enhance(1.15)
+                            img = ImageEnhance.Color(img).enhance(1.1)
+            except Exception as pex_exc:
+                logger.debug("Thumbnail Pexels bg skipped", error=str(pex_exc))
+
+            if img is None:
+                img = Image.new("RGB", (width, height), (10, 14, 28))
+                draw0 = ImageDraw.Draw(img)
+                for y in range(height):
+                    r = int(10 + 30 * (y / height))
+                    g = int(14 + 20 * (y / height))
+                    b = int(28 + 50 * (y / height))
+                    draw0.line([(0, y), (width, y)], fill=(r, g, b))
+
+            overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            od = ImageDraw.Draw(overlay)
+            band = int(height * 0.42)
+            for i in range(band):
+                a = int(200 * (i / band))
+                y = height - band + i
+                od.line([(0, y), (width, y)], fill=(0, 0, 0, a))
+            img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
             draw = ImageDraw.Draw(img)
 
-            # Draw accent stripe
-            stripe_h = height // 6
-            draw.rectangle([(0, height - stripe_h), (width, height)], fill=accent_color)
-
-            # Draw title text — use default font (no external font required)
-            title = output.title_text or output.concept[:40]
+            font_size = 72 if is_short else 64
             try:
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
-                small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+                font = ImageFont.truetype(
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size
+                )
             except (IOError, OSError):
                 font = ImageFont.load_default()
-                small_font = font
 
-            # Center the title
-            bbox = draw.textbbox((0, 0), title, font=font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            x = (width - tw) // 2
-            y = (height - th) // 2
-            draw.text((x, y), title, fill=text_color, font=font)
+            max_w = width - 80
+            lines: list[str] = []
+            cur = ""
+            for w in title.split():
+                trial = (cur + " " + w).strip()
+                bbox = draw.textbbox((0, 0), trial, font=font)
+                if cur and (bbox[2] - bbox[0]) > max_w:
+                    lines.append(cur)
+                    cur = w
+                else:
+                    cur = trial
+            if cur:
+                lines.append(cur)
+            lines = lines[:2]
 
-            # Subtitle
-            if output.subtitle_text:
-                sbbox = draw.textbbox((0, 0), output.subtitle_text, font=small_font)
-                sw = sbbox[2] - sbbox[0]
-                draw.text(
-                    ((width - sw) // 2, y + th + 20),
-                    output.subtitle_text,
-                    fill=accent_color,
-                    font=small_font,
-                )
+            line_h = font_size + 12
+            block_h = len(lines) * line_h
+            y0 = height - int(height * 0.12) - block_h
+
+            for i, line in enumerate(lines):
+                bbox = draw.textbbox((0, 0), line, font=font)
+                tw = bbox[2] - bbox[0]
+                x = (width - tw) // 2
+                y = y0 + i * line_h
+                for dx, dy in [(-3, 0), (3, 0), (0, -3), (0, 3), (-2, -2), (2, 2), (-2, 2), (2, -2)]:
+                    draw.text((x + dx, y + dy), line, fill=(0, 0, 0), font=font)
+                draw.text((x, y), line, fill=text_color, font=font)
+
+            bar_y = y0 + block_h + 16
+            draw.rectangle(
+                [(width // 2 - 80, bar_y), (width // 2 + 80, bar_y + 8)],
+                fill=accent_color,
+            )
 
             img.save(str(file_path), "PNG", optimize=True)
-            logger.info("Thumbnail rendered", path=str(file_path))
+            logger.info("Thumbnail rendered (growth)", path=str(file_path), title=title)
 
         except ImportError:
-            # Pillow not installed — write a minimal placeholder file
             logger.warning("Pillow not available — writing placeholder thumbnail")
-            file_path.write_bytes(b"\x89PNG\r\n\x1a\n")  # PNG magic bytes only
-
+            file_path.write_bytes(b"\x89PNG\r\n\x1a\n")
         except Exception as exc:
             logger.error("Thumbnail render error", error=str(exc))
             file_path.write_bytes(b"\x89PNG\r\n\x1a\n")
