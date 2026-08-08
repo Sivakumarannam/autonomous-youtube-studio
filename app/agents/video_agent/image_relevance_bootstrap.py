@@ -108,7 +108,14 @@ def apply_image_relevance_patch() -> None:
                         )
 
                         orientation = "portrait" if width < height else "landscape"
-                        search_q = extract_visual_keywords(prompt, topic=topic)
+                        # Opening scene: force topic-led query (hook narration is weak for stock)
+                        is_open = scene_num in (0, 1)
+                        if is_open and topic:
+                            search_q = extract_visual_keywords(
+                                f"{topic} {prompt}", topic=topic
+                            )
+                        else:
+                            search_q = extract_visual_keywords(prompt, topic=topic)
                         pexels_path = await download_photo(
                             search_q, orientation=orientation
                         )
