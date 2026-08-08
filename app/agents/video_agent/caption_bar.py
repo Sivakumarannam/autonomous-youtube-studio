@@ -1,4 +1,4 @@
-"""Static caption bar with anti-edge-clipping layout."""
+"""Static caption bar with anti-edge-clipping layout (up to 3 lines)."""
 from __future__ import annotations
 
 from app.core.config import settings
@@ -39,7 +39,7 @@ def draw_caption_bar(
             return fnt, token
         size = int(getattr(fnt, "size", base_size) or base_size)
         trial = fnt
-        for new_size in range(size - 2, max(18, size // 2) - 1, -2):
+        for new_size in range(size - 2, max(16, size // 2) - 1, -2):
             try:
                 trial = renderer._load_font(bold=True, size=new_size)
             except Exception:
@@ -51,6 +51,7 @@ def draw_caption_bar(
             t = t[:-1]
         return trial, (t + "…") if t != token else t
 
+    max_lines = 3  # was 2 — CTA was cut mid-sentence
     words = text.split()
     lines: list[str] = []
     current = ""
@@ -71,24 +72,25 @@ def draw_caption_bar(
             if current:
                 lines.append(current)
             current = word
-            if len(lines) >= 2:
+            if len(lines) >= max_lines:
                 break
-    if current and len(lines) < 2:
+    if current and len(lines) < max_lines:
         lines.append(current)
 
-    lines = lines[:2]
+    lines = lines[:max_lines]
     if not lines:
         return
 
+    # If still overflowing last line, ellipsis instead of hard cut
     fitted_lines: list[str] = []
-    for line in lines:
+    for i, line in enumerate(lines):
         if _measure(line, line_font) <= safe_max:
             fitted_lines.append(line)
         else:
             size = int(getattr(line_font, "size", base_size) or base_size)
             trial = line_font
             text_out = line
-            for new_size in range(size, 17, -2):
+            for new_size in range(size, 15, -2):
                 trial = renderer._load_font(bold=True, size=new_size)
                 if _measure(line, trial) <= safe_max:
                     line_font = trial
@@ -103,14 +105,28 @@ def draw_caption_bar(
             fitted_lines.append(text_out)
     lines = fitted_lines
 
-    try:
-        line_height = int(getattr(line_font, "size", 28) or 28) + 10
-    except Exception:
-        line_height = 30
+    # leftover words → put on last line with …
+    used = " ".join(lines).split()
+    if len(used) < len(words) and lines:
+        rest = " ".join(words[len(used):])
+        last = lines[-1]
+        extra = f"{last} {rest}".strip()
+        if _measure(extra, line_font) <= safe_max:
+            lines[-1] = extra
+        else:
+            t = extra
+            while len(t) > 3 and _measure(t + "…", line_font) > safe_max:
+                t = t[:-1]
+            lines[-1] = t + "…"
 
-    padding_v = 16
+    try:
+        line_height = int(getattr(line_font, "size", 28) or 28) + 8
+    except Exception:
+        line_height = 28
+
+    padding_v = 14
     bar_height = len(lines) * line_height + padding_v * 2
-    bottom_gap = max(36, int(canvas_height * 0.03))
+    bottom_gap = max(32, int(canvas_height * 0.025))
     bar_top = canvas_height - bar_height - bottom_gap
 
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
