@@ -4,6 +4,7 @@ Applied from app.main lifespan. Safe no-op if renderer API changes.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from app.core.config import settings
@@ -13,8 +14,9 @@ logger = get_logger(__name__)
 
 
 def _display_text(cta_text: Optional[str]) -> str:
-    fallback = getattr(settings, "end_card_text", "FOLLOW FOR MORE") or "FOLLOW FOR MORE"
-    raw = (cta_text or "").strip() or fallback.strip()
+    fallback = getattr(settings, "end_card_text", None) or "SUBSCRIBE FOR MORE"
+    raw = (cta_text or "").strip() or str(fallback).strip()
+    raw = re.sub(r"(?i)\bfollow\b", "Subscribe", raw)
     words = raw.split()
     if len(words) > 7:
         raw = " ".join(words[:7])
