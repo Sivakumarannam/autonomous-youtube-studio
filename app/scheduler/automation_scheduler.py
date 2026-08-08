@@ -361,6 +361,12 @@ class DailyAutomationScheduler:
         topic_repo: TopicRepository,
         content_type: str,
     ):
+        try:
+            from app.agents.topic_agent.performance_feedback import apply_performance_scores
+            await apply_performance_scores(session, channel.id)
+        except Exception as exc:
+            logger.debug("performance feedback skipped", error=str(exc))
+
         topic = await topic_repo.get_eligible_for_automation(channel.id)
         if topic is not None:
             return topic
