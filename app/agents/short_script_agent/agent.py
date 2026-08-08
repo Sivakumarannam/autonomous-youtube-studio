@@ -177,7 +177,7 @@ class ShortScriptAgent:
             full_script = " ".join(parts)
 
         try:
-            hook = strengthen_hook(hook) or hook
+            hook = strengthen_hook(hook, full_script) or hook
         except Exception:
             pass
 
