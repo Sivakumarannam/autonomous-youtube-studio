@@ -58,6 +58,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     apply_caption_clip_patch()
 
     try:
+        from app.agents.video_agent.skip_hook_caption_bootstrap import apply_skip_hook_caption_patch
+        apply_skip_hook_caption_patch()
+    except Exception:
+        pass
+
+    try:
         from app.agents.video_agent.end_cta_bootstrap import apply_end_cta_patch
         apply_end_cta_patch()
     except Exception:
@@ -289,7 +295,7 @@ def create_app() -> FastAPI:
     from fastapi.responses import HTMLResponse
     from app.web.templates import templates as _templates_for_limit
 
-    async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    async def _rate_limit_handler(request: Request, exp: RateLimitExceeded):
         if request.url.path == "/login" and request.method == "POST":
             return _templates_for_limit.TemplateResponse(
                 request,
@@ -300,7 +306,7 @@ def create_app() -> FastAPI:
                 },
                 status_code=429,
             )
-        return _rate_limit_exceeded_handler(request, exc)
+        return _rate_limit_exceeded_handler(request, exp)
 
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     app.add_middleware(SlowAPIMiddleware)
@@ -367,7 +373,7 @@ def create_app() -> FastAPI:
         return response
 
     @app.exception_handler(NotFoundError)
-    async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+    async def not_found_handler(request: Request, exp: NotFoundError) -> JSONResponse:
         return JSONResponse(status_code=404, content={"error": exp.code, "message": exp.message})
 
     @app.exception_handler(ValidationError)
