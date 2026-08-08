@@ -122,9 +122,9 @@ def mix_music_under_voice(
 
     The music is:
     - Looped if shorter than the voice track
-    - Volume-adjusted to `music_volume_db` minus 4 dB soft-duck (default -22 → -26)
-    - Extra-capped so music stays at least ~18 dB under the voice average
-    - Window-duck: further −8 dB under active speech (100 ms windows)
+    - Volume-adjusted to `music_volume_db` minus 6 dB soft-duck (default -22 → -28)
+    - Extra-capped so music stays at least ~20 dB under the voice average
+    - Window-duck: further −10 dB under active speech (100 ms windows)
     - Faded in and out
     - Trimmed to match voice duration
 
@@ -137,14 +137,14 @@ def mix_music_under_voice(
         music = AudioSegment.from_file(music_path)
 
         # Soft-duck: bed quieter than configured level so speech stays clear
-        target_bed_db = float(music_volume_db) - 4.0
+        target_bed_db = float(music_volume_db) - 6.0
 
         if music.dBFS != float("-inf"):
             music = music + (target_bed_db - music.dBFS)
 
-        # Safety: keep music at least ~18 dB under voice average
+        # Safety: keep music at least ~20 dB under voice average
         if voice.dBFS != float("-inf") and music.dBFS != float("-inf"):
-            max_music_dbfs = voice.dBFS - 18.0
+            max_music_dbfs = voice.dBFS - 20.0
             if music.dBFS > max_music_dbfs:
                 music = music + (max_music_dbfs - music.dBFS)
 
@@ -159,8 +159,8 @@ def mix_music_under_voice(
         # Window-duck: extra cut under speech; mild floor in gaps (pydub-only)
         try:
             window_ms = 100
-            duck_db = -8.0
-            floor_db = -2.0
+            duck_db = -10.0
+            floor_db = -3.0
             voice_thresh = (
                 voice.dBFS - 8.0 if voice.dBFS != float("-inf") else -30.0
             )
